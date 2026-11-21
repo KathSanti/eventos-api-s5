@@ -22,6 +22,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())                                      
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth// pipeline y errores
+                .requestMatchers("/salud", "/error").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/eventos").permitAll()    
                 .anyRequest().authenticated())                                 
             .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults())); // valida el JWT de Entra ID
