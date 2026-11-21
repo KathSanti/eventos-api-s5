@@ -10,5 +10,7 @@ import com.duoc.mscompras.model.Compra;
 public interface CompraRepository extends JpaRepository<Compra, Long> {
 
     // Trae la compra y su evento en la misma consulta
+    @EntityGraph(attributePaths = "evento")
     Optional<Compra> findConEventoById(Long id);
 }
+ 

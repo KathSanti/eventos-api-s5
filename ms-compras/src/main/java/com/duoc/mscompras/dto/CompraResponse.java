@@ -17,7 +17,8 @@ public record CompraResponse(
         int cantidad,
         BigDecimal precioUnitario,
         BigDecimal precioTotal,
-        @JsonFormat(shape = JsonFormat.Shape.STRING) LocalDateTime fechaCompra
+        @JsonFormat(shape = JsonFormat.Shape.STRING) LocalDateTime fechaCompra,
+        boolean activa                    
 ) {
 
     public static CompraResponse desde(Compra compra) {
@@ -30,6 +31,7 @@ public record CompraResponse(
                 compra.getCantidad(),
                 compra.getPrecioUnitario(),
                 compra.getPrecioTotal(),
-                compra.getFechaCompra());
+                compra.getFechaCompra(),
+                compra.isActiva());        
     }
 }

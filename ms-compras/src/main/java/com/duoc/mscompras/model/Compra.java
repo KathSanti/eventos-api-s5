@@ -3,6 +3,8 @@ package com.duoc.mscompras.model;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import org.hibernate.annotations.ColumnDefault;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -54,4 +56,13 @@ public class Compra {
 
     @Column(name = "fecha_compra", nullable = false)
     private LocalDateTime fechaCompra;
+
+    // Dueño de la compra
+    @Column(name = "usuario_id", length = 64)
+    private String usuarioId;
+
+    // Borrado lógico 
+    @ColumnDefault("1")            
+    @Column(nullable = false)
+    private boolean activa = true;
 }
