@@ -52,9 +52,6 @@
 			<optional>true</optional>
 		</dependency>
 
-		<!-- Ya NO hay spring-boot-starter-security ni jjwt:
-		     la autenticación la hace Azure AD B2C y el token lo valida AWS API Gateway. -->
-
 		<!-- Tests -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -71,12 +68,27 @@
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
 		</dependency>
-	</dependencies>
+		<dependency>
+			<groupId>org.projectlombok</groupId>
+			<artifactId>lombok</artifactId>
+			<optional>true</optional>
+		</dependency>
 
-	<dependency>
-		<groupId>org.springframework.boot</groupId>
-		<artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
-	</dependency>
+		<!-- Spring Security como Resource Server: valida el JWT de Entra ID -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+		</dependency>
+
+		<!-- Tests -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+
+	</dependencies>
 
 	<build>
 		<plugins>
