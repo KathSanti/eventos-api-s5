@@ -5,6 +5,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,18 +20,11 @@ import com.duoc.msresumenes.dto.ArchivoResumen;
 import com.duoc.msresumenes.model.Asset;
 import com.duoc.msresumenes.service.ResumenService;
 
-/**
- * Los 5 endpoints que pide la actividad. Todos se inscriben en AWS API Gateway
- * y se protegen con el token de Azure AD B2C (el backend ya no valida JWT).
- *
- *  GET    /api/resumenes/{numero}      -> generar el resumen como archivo físico
- *  POST   /api/resumenes/{numero}/s3   -> subirlo a S3 (carpeta {numero}/)
- *  PUT    /api/resumenes/{numero}/s3   -> modificarlo (form-data, campo "file")
- *  GET    /api/resumenes/{numero}/s3   -> descargarlo desde S3
- *  DELETE /api/resumenes/{numero}/s3   -> borrarlo de S3
- */
+// endpoints protegidos con Spring Security + Entra ID
+
 @RestController
 @RequestMapping("/api/resumenes/{numero}")
+@PreAuthorize("hasAnyRole('CLIENTE', 'ADMIN')")   // misma regla para todos los métodos 
 public class ResumenController {
 
     private final ResumenService resumenService;
@@ -61,12 +55,13 @@ public class ResumenController {
     }
 
     @DeleteMapping("/s3")
+    @PreAuthorize("hasRole('ADMIN')")            
     public ResponseEntity<Void> eliminar(@PathVariable("numero") Long numero) {
         resumenService.eliminarDeS3(numero);
         return ResponseEntity.noContent().build();
     }
 
-    /** "Content-Disposition: attachment" hace que el navegador/Postman lo guarde como archivo. */
+    
     private ResponseEntity<byte[]> comoDescarga(ArchivoResumen archivo) {
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
