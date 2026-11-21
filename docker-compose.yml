@@ -1,0 +1,60 @@
+# =====================================================================
+#  Docker Compose para TU COMPUTADOR (prueba local de los 2 microservicios).
+#  Construye las imágenes desde cada carpeta y usa un MySQL local en vez de RDS.
+#
+#  Uso:      cp .env.example .env   (completa S3_BUCKET y las 3 credenciales de AWS Academy)
+#            docker compose up --build
+#  Detener:  docker compose down    (agrega -v para borrar también los datos)
+# =====================================================================
+name: eventos-ms-local
+
+services:
+
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: compras_db
+      MYSQL_USER: compras_app
+      MYSQL_PASSWORD: ${DB_PASSWORD:-clave-local-123}
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u\"$$MYSQL_USER\" -p\"$$MYSQL_PASSWORD\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - compras_mysql_data:/var/lib/mysql
+
+  ms-compras:
+    build: ./ms-compras
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: db
+      DB_NAME: compras_db
+      DB_USER: compras_app
+      DB_PASSWORD: ${DB_PASSWORD:-clave-local-123}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:-}
+    ports:
+      - "8081:8081"
+
+  ms-resumenes:
+    build: ./ms-resumenes
+    depends_on:
+      - ms-compras
+    environment:
+      COMPRAS_URL: http://ms-compras:8081
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:?Falta S3_BUCKET en .env}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:-}
+    ports:
+      - "8082:8082"
+
+volumes:
+  compras_mysql_data:

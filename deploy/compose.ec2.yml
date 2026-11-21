@@ -1,0 +1,48 @@
+# =====================================================================
+#  Docker Compose para la instancia EC2 (lo copia y ejecuta GitHub Actions).
+#
+#  2 microservicios, cada uno en su contenedor y con su propio almacenamiento:
+#    ms-compras    -> puerto 8081 -> AWS RDS MySQL (base compras_db)
+#    ms-resumenes  -> puerto 8082 -> AWS S3 (bucket de resúmenes)
+#
+#  ms-resumenes llama a ms-compras por la red interna de Docker: http://ms-compras:8081
+#  Las variables las escribe el workflow en ~/eventos-microservicios/.env (permisos 600).
+# =====================================================================
+name: eventos-ms
+
+services:
+
+  ms-compras:
+    image: ${DOCKERHUB_USERNAME:?Falta DOCKERHUB_USERNAME}/eventos-ms-compras:${IMAGE_TAG:-latest}
+    container_name: ms-compras
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: ${DB_HOST:?Falta DB_HOST (endpoint de RDS)}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-compras_db}
+      DB_USER: ${DB_USER:?Falta DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:-}
+      JAVA_TOOL_OPTIONS: "-Xmx384m -XX:MaxMetaspaceSize=128m"
+    ports:
+      - "8081:8081"
+
+  ms-resumenes:
+    image: ${DOCKERHUB_USERNAME:?Falta DOCKERHUB_USERNAME}/eventos-ms-resumenes:${IMAGE_TAG:-latest}
+    container_name: ms-resumenes
+    restart: unless-stopped
+    depends_on:
+      - ms-compras
+    environment:
+      COMPRAS_URL: http://ms-compras:8081
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:?Falta S3_BUCKET}
+      # AWS Academy: vencen en cada sesión del Learner Lab. Vacías = rol IAM de la EC2.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      GATEWAY_SECRET: ${GATEWAY_SECRET:-}
+      JAVA_TOOL_OPTIONS: "-Xmx320m -XX:MaxMetaspaceSize=128m"
+    ports:
+      - "8082:8082"

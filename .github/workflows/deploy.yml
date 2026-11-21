@@ -1,0 +1,214 @@
+# =====================================================================
+#  Build, Test and Deploy - Eventos Microservicios
+#  (adaptado del workflow del profe: cloud-native-semana4 / deploy.yml)
+#
+#  Mismo esquema de 3 jobs, pero ahora para 2 microservicios (matrix):
+#    1) tests      -> mvn verify de ms-compras y ms-resumenes (en PRs y push a main)
+#    2) docker     -> construye y publica 2 imágenes en Docker Hub (latest + sha)
+#    3) deploy-ec2 -> copia el compose a la EC2, hace pull/up y prueba /salud en 8081 y 8082
+#
+#  El API Gateway y Azure AD B2C se configuran A MANO (ver la guía), no en CI/CD.
+#
+#  Secrets (Settings -> Secrets and variables -> Actions -> Secrets):
+#    DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+#    EC2_HOST, EC2_USER, EC2_SSH_KEY
+#    DB_HOST, DB_USER, DB_PASSWORD                                 (AWS RDS)
+#    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN   (Learner Lab, para S3)
+#    GATEWAY_SECRET                                                (opcional)
+#  Variables (pestaña Variables):
+#    S3_BUCKET   (obligatoria)
+#    AWS_REGION  (opcional, por defecto us-east-1)
+#    DB_NAME     (opcional, por defecto compras_db)
+# =====================================================================
+name: Build, Test and Deploy - Eventos Microservicios
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Evita dos despliegues al mismo tiempo sobre la misma EC2.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------
+  # JOB 1: TESTS de cada microservicio (no necesitan secretos)
+  # ------------------------------------------------------------------
+  tests:
+    name: Tests (${{ matrix.servicio }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        servicio: [ms-compras, ms-resumenes]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: ${{ matrix.servicio }}/pom.xml
+      - name: Ejecutar pruebas
+        run: mvn -B -ntp -f ${{ matrix.servicio }}/pom.xml clean verify
+
+  # ------------------------------------------------------------------
+  # JOB 2: IMAGEN DOCKER de cada microservicio -> Docker Hub
+  # ------------------------------------------------------------------
+  docker:
+    name: Docker (${{ matrix.servicio }})
+    if: github.event_name != 'pull_request'
+    needs: tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        servicio: [ms-compras, ms-resumenes]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Construir y publicar eventos-${{ matrix.servicio }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.servicio }}
+          file: ./${{ matrix.servicio }}/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/eventos-${{ matrix.servicio }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/eventos-${{ matrix.servicio }}:${{ github.sha }}
+
+  # ------------------------------------------------------------------
+  # JOB 3: DESPLEGAR LOS 2 CONTENEDORES EN LA EC2
+  # ------------------------------------------------------------------
+  deploy-ec2:
+    name: Desplegar en EC2
+    if: github.event_name != 'pull_request'
+    needs: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verificar secrets y variables obligatorias
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+        run: |
+          for v in DOCKERHUB_USERNAME DOCKERHUB_TOKEN EC2_HOST EC2_USER EC2_SSH_KEY DB_HOST DB_USER DB_PASSWORD S3_BUCKET; do
+            test -n "${!v}" || { echo "::error::Falta el secret/variable $v"; exit 1; }
+          done
+          echo "Secrets OK"
+
+      # Si cargaste las credenciales del Learner Lab, revisa que sigan vigentes ANTES de desplegar
+      # (vencen en cada sesión; si están vencidas, los endpoints de S3 responderían 502).
+      - name: Verificar credenciales de AWS Academy y bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "::warning::Sin credenciales AWS en secrets: ms-resumenes usará el rol IAM de la EC2 (LabInstanceProfile)."
+            exit 0
+          fi
+          aws sts get-caller-identity --query Arn --output text \
+            || { echo "::error::Credenciales AWS vencidas: actualiza los 3 secrets AWS_* (Learner Lab -> AWS Details)."; exit 1; }
+          aws s3api head-bucket --bucket "$S3_BUCKET" \
+            || { echo "::error::No se puede acceder al bucket '$S3_BUCKET'."; exit 1; }
+
+      - name: Copiar Compose a EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: deploy/compose.ec2.yml
+          target: ~/eventos-microservicios
+          strip_components: 1
+
+      - name: Actualizar contenedores en EC2
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ vars.DB_NAME || 'compras_db' }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+          GATEWAY_SECRET: ${{ secrets.GATEWAY_SECRET }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,IMAGE_TAG,DB_HOST,DB_USER,DB_PASSWORD,DB_NAME,AWS_REGION,S3_BUCKET,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,GATEWAY_SECRET
+          command_timeout: 15m
+          script: |
+            set -eu
+            umask 077
+            cd ~/eventos-microservicios
+
+            # Las credenciales viven solo en la EC2, en un archivo con permisos 600
+            # (nunca en el repositorio ni dentro de la imagen Docker).
+            printf '%s=%s\n' \
+              DOCKERHUB_USERNAME "$DOCKERHUB_USERNAME" \
+              IMAGE_TAG "$IMAGE_TAG" \
+              DB_HOST "$DB_HOST" \
+              DB_USER "$DB_USER" \
+              DB_PASSWORD "$DB_PASSWORD" \
+              DB_NAME "$DB_NAME" \
+              AWS_REGION "$AWS_REGION" \
+              S3_BUCKET "$S3_BUCKET" \
+              AWS_ACCESS_KEY_ID "$AWS_ACCESS_KEY_ID" \
+              AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY" \
+              AWS_SESSION_TOKEN "$AWS_SESSION_TOKEN" \
+              GATEWAY_SECRET "$GATEWAY_SECRET" > .env.tmp
+            mv .env.tmp .env
+
+            printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin > /dev/null
+            docker compose -f compose.ec2.yml --env-file .env pull
+            docker compose -f compose.ec2.yml --env-file .env up -d --remove-orphans
+            docker compose -f compose.ec2.yml --env-file .env ps
+
+            # Control de salud de cada microservicio (como /salud del profe)
+            for puerto in 8081 8082; do
+              ok=0
+              for i in $(seq 1 30); do
+                if curl --fail --silent "http://127.0.0.1:$puerto/salud" > /dev/null; then ok=1; break; fi
+                sleep 5
+              done
+              if [ "$ok" = "1" ]; then
+                echo "Microservicio en puerto $puerto desplegado y disponible"
+              else
+                echo "Error: el puerto $puerto no responde en /salud"
+                docker compose -f compose.ec2.yml --env-file .env logs --tail=80
+                exit 1
+              fi
+            done
+            docker image prune -f > /dev/null || true

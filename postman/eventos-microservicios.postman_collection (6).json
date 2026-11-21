@@ -1,0 +1,1009 @@
+{
+  "info": {
+    "_postman_id": "df2b8282-408b-43d7-b4bf-a3c9fd4ee0a9",
+    "name": "Eventos Microservicios · API Gateway + Azure AD B2C",
+    "description": "# Eventos Microservicios · Semana 4 (CDY2204)\n\n**Actividad:** *Configurando IDaaS y API Manager.* Dos microservicios Spring Boot en una EC2, publicados en **AWS API Gateway** (API Manager) y autenticados con **Azure AD B2C** (IDaaS).\n\n## Arquitectura\n\n```\nPostman ──(1) login──► Azure AD B2C ──(2) access token JWT──► Postman\n   │\n   │ (3) Authorization: Bearer <token>\n   ▼\nAWS API Gateway (HTTP API) ── autorizador JWT: firma, iss, aud, exp, scp\n   │                                   │\n   │ /api/eventos, /api/compras/**     │ /api/resumenes/**\n   ▼                                   ▼\nms-compras :8081  ◄── HTTP interno ──  ms-resumenes :8082\n   │                                   │\n   ▼                                   ▼\nAWS RDS MySQL (compras_db)            AWS S3  {numero}/resumen-compra-{numero}.txt\n```\n\n| Microservicio | Responsabilidad | Almacenamiento |\n|---|---|---|\n| **ms-compras** | Eventos y compras | **RDS** MySQL |\n| **ms-resumenes** | Los 5 endpoints del resumen (archivo + S3) | **S3** |\n\nCada microservicio es dueño de su almacenamiento: ms-resumenes **no** entra a la base de datos; le pide la compra a ms-compras por HTTP.\n\n## Cómo se autentica (Azure AD B2C)\n\n1. La **Authorization** de esta colección es **OAuth 2.0 · Authorization Code** contra el user flow de B2C. La app está registrada como plataforma **Web** (cliente confidencial), por eso Postman envía **Client ID + Client Secret** al canjear el código por el token.\n2. **Get New Access Token** abre el login de B2C. El usuario se registra o inicia sesión y B2C devuelve un **access token** firmado.\n3. Postman envía el token en cada petición: `Authorization: Bearer <token>`. Todas las carpetas lo **heredan** de la colección. El catálogo (`GET /api/eventos`) es la única ruta **pública**.\n4. El **autorizador JWT del API Gateway** descarga las claves públicas de B2C (JWKS) y valida firma, `iss`, `aud`, `exp` y `scp`. Si falla, responde **401** y la petición **nunca llega a la EC2**.\n5. Los microservicios ya **no** tienen Spring Security ni JWT propio: confían en el Gateway.\n\n## Antes de ejecutar\n\n1. Pestaña **Variables**: completa `gatewayUrl`, `ec2Ip`, `b2cTenant`, `b2cPolicy`, `b2cClientId` y `b2cScope`. El `b2cClientSecret` va **solo en la columna Current value** → **Save**.\n2. Pestaña **Authorization** → **Get New Access Token** → inicia sesión → **Use Token** (tipo *Access token*).\n3. Ejecuta las carpetas **en orden**. `numeroResumen` se guarda solo al comprar.\n4. Abre la pestaña **Test Results** de cada respuesta: cada test explica qué se comprobó.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "oauth2",
+    "oauth2": [
+      {
+        "key": "tokenName",
+        "value": "Token Azure B2C",
+        "type": "string"
+      },
+      {
+        "key": "grant_type",
+        "value": "authorization_code",
+        "type": "string"
+      },
+      {
+        "key": "authUrl",
+        "value": "https://{{b2cTenant}}.b2clogin.com/{{b2cTenant}}.onmicrosoft.com/{{b2cPolicy}}/oauth2/v2.0/authorize",
+        "type": "string"
+      },
+      {
+        "key": "accessTokenUrl",
+        "value": "https://{{b2cTenant}}.b2clogin.com/{{b2cTenant}}.onmicrosoft.com/{{b2cPolicy}}/oauth2/v2.0/token",
+        "type": "string"
+      },
+      {
+        "key": "clientId",
+        "value": "{{b2cClientId}}",
+        "type": "string"
+      },
+      {
+        "key": "clientSecret",
+        "value": "{{b2cClientSecret}}",
+        "type": "string"
+      },
+      {
+        "key": "scope",
+        "value": "{{b2cScope}} openid offline_access",
+        "type": "string"
+      },
+      {
+        "key": "redirect_uri",
+        "value": "https://oauth.pstmn.io/v1/callback",
+        "type": "string"
+      },
+      {
+        "key": "useBrowser",
+        "value": false,
+        "type": "boolean"
+      },
+      {
+        "key": "client_authentication",
+        "value": "body",
+        "type": "string"
+      },
+      {
+        "key": "addTokenTo",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "gatewayUrl",
+      "value": "https://API_ID.execute-api.us-east-1.amazonaws.com",
+      "description": "Invoke URL del API Gateway (sin / final)"
+    },
+    {
+      "key": "ec2Ip",
+      "value": "IP_ELASTICA_EC2",
+      "description": "Solo para la prueba 3.3"
+    },
+    {
+      "key": "b2cTenant",
+      "value": "mitenant",
+      "description": "Lo que va antes de .onmicrosoft.com"
+    },
+    {
+      "key": "b2cPolicy",
+      "value": "B2C_1_registro_login",
+      "description": "Nombre del user flow"
+    },
+    {
+      "key": "b2cClientId",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "description": "Application (client) ID"
+    },
+    {
+      "key": "b2cClientSecret",
+      "value": "",
+      "description": "VALOR del secreto de cliente (Certificados y secretos). Ponlo SOLO en 'Current value', nunca en 'Initial value', para que no se exporte ni se suba a GitHub"
+    },
+    {
+      "key": "b2cScope",
+      "value": "https://mitenant.onmicrosoft.com/eventos-api/datos.leer",
+      "description": "Scope COMPLETO expuesto por la API"
+    },
+    {
+      "key": "graphClientId",
+      "value": "",
+      "description": "Id. de aplicación (cliente) de la app postman-graph (solo para 0.6)"
+    },
+    {
+      "key": "graphClientSecret",
+      "value": "",
+      "description": "VALOR del secreto de postman-graph. Solo en 'Current value' (solo para 0.6)"
+    },
+    {
+      "key": "numeroResumen",
+      "value": "",
+      "description": "Lo llena 1.2 Comprar"
+    },
+    {
+      "key": "jwksUri",
+      "value": "",
+      "description": "Lo llena 0.1 Metadatos OIDC"
+    }
+  ],
+  "item": [
+    {
+      "name": "0 · Autenticación Azure AD B2C (IDaaS)",
+      "description": "## Paso 0 · Autenticación con Azure AD B2C (IDaaS)\n\nEsta carpeta muestra **cómo el API Gateway confía en B2C** y qué rutas protege.\n\n| # | Petición | Qué demuestra |\n|---|---|---|\n| 0.1 | Metadatos OIDC de B2C | La \"ficha\" pública de B2C: emisor, URL de login y de claves |\n| 0.2 | Claves públicas (JWKS) | Las claves con que el Gateway verifica la firma del token |\n| 0.3 | Catálogo **sin** token | **200**: ver eventos es público a propósito (ruta sin autorizador) |\n| 0.4 | Comprar **sin** token | **401**: comprar exige login; el Gateway corta la petición |\n| 0.5 | Comprar con token **falso** | **401**: la firma no coincide con las claves de B2C |\n| 0.6 | Usuarios registrados (Microsoft Graph) | Los usuarios viven en **B2C**, no en nuestra BD. No pasa por el Gateway |\n\n**Rutas en el API Gateway:** `GET /api/eventos` es **pública**; las otras 7 (comprar, ver compra y los 5 del resumen) tienen el autorizador `azure-ad-b2c`.\n",
+      "item": [
+        {
+          "name": "0.1 B2C · Metadatos OIDC (lo que lee el Gateway)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://{{b2cTenant}}.b2clogin.com/{{b2cTenant}}.onmicrosoft.com/{{b2cPolicy}}/v2.0/.well-known/openid-configuration",
+              "host": [
+                "https://{{b2cTenant}}.b2clogin.com"
+              ],
+              "path": [
+                "{{b2cTenant}}.onmicrosoft.com",
+                "{{b2cPolicy}}",
+                "v2.0",
+                ".well-known",
+                "openid-configuration"
+              ]
+            },
+            "description": "Documento público de **OpenID Connect** de tu user flow.\n\n- `issuer`: debe ser igual al **Issuer URL** del autorizador JWT (formato `/tfp/`).\n- `authorization_endpoint` / `token_endpoint`: las URLs que usa Postman para el login.\n- `jwks_uri`: de ahí el Gateway descarga las claves públicas.\n\nEl test guarda `jwks_uri` para la petición 0.2.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · B2C publica su configuración OIDC\", () => pm.response.to.have.status(200));",
+                  "const m = pm.response.json();",
+                  "pm.collectionVariables.set('jwksUri', m.jwks_uri);",
+                  "pm.test('issuer en formato tfp (necesario para el autorizador de AWS)', () => pm.expect(m.issuer).to.include('/tfp/'));",
+                  "console.log('issuer =', m.issuer);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.2 B2C · Claves públicas JWKS (verifican la firma)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{jwksUri}}",
+              "host": [
+                "{{jwksUri}}"
+              ],
+              "path": []
+            },
+            "description": "Claves públicas de B2C. El token viene **firmado** con la clave privada de B2C; el API Gateway verifica la firma con estas claves (el `kid` del token indica cuál usar). Así nadie puede fabricar un token válido.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · B2C publica sus claves públicas\", () => pm.response.to.have.status(200));",
+                  "pm.test('Hay al menos una clave (kid)', () => pm.expect(pm.response.json().keys.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.3 Catálogo de eventos SIN token → 200 (ruta pública)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/eventos",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "eventos"
+              ]
+            },
+            "description": "**Decisión de diseño:** ver el catálogo de eventos es **público**, como en cualquier página de entradas. Por eso la ruta `GET /api/eventos` **no tiene autorizador** en el API Gateway.\n\n**Flujo:** Gateway (ruta pública) → ms-compras :8081 → RDS `SELECT * FROM evento`.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · el catálogo es público: se ve sin iniciar sesión\", () => pm.response.to.have.status(200));",
+                  "pm.test('Hay eventos disponibles (leídos de RDS)', () => pm.expect(pm.response.json().length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 eventos",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/eventos",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "eventos"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "[\n  {\n    \"nombre\": \"Festival de Jazz\",\n    \"fecha\": \"2027-03-12\",\n    \"precio\": 18000.0,\n    \"disponible\": true\n  },\n  {\n    \"nombre\": \"Concierto Rock Duoc\",\n    \"fecha\": \"2026-12-12\",\n    \"precio\": 25000.0,\n    \"disponible\": true\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "0.4 Comprar SIN token → 401 (ruta protegida)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/compras",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras"
+              ]
+            },
+            "description": "Comprar **sí** exige iniciar sesión. Sin header `Authorization`, el **autorizador JWT** del Gateway responde **401 Unauthorized**: la petición nunca llega a la EC2 y **no se crea ninguna compra**.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombreCliente\": \"Ana Pérez\",\n  \"emailCliente\": \"ana@correo.cl\",\n  \"nombreEvento\": \"Festival de Jazz\",\n  \"cantidad\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401 · el API Gateway rechaza la compra sin token\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "401 sin token",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/compras",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "compras"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"message\": \"Unauthorized\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "0.5 Comprar con token FALSO → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJmYWxzbyJ9.firma-invalida"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/compras",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras"
+              ]
+            },
+            "description": "Un token inventado (o con una letra cambiada) no pasa la verificación de firma con las claves JWKS de B2C → **401**.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombreCliente\": \"Ana Pérez\",\n  \"emailCliente\": \"ana@correo.cl\",\n  \"nombreEvento\": \"Festival de Jazz\",\n  \"cantidad\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"401 · token sin firma válida de B2C es rechazado\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.6 B2C · Usuarios registrados (Microsoft Graph, no pasa por el Gateway)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "https://graph.microsoft.com/v1.0/users?$select=displayName,identities,createdDateTime",
+              "protocol": "https",
+              "host": [
+                "graph",
+                "microsoft",
+                "com"
+              ],
+              "path": [
+                "v1.0",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "$select",
+                  "value": "displayName,identities,createdDateTime"
+                }
+              ]
+            },
+            "description": "Muestra que los **usuarios viven en Azure AD B2C**, no en nuestra base de datos.\n\n- Esta petición va directo a **Microsoft Graph** (la API de Microsoft para administrar el directorio). **No pasa por nuestro API Gateway** ni por la EC2.\n- Usa su **propia autorización**: OAuth 2.0 *Client Credentials* con la app `postman-graph`, que tiene el permiso de aplicación **User.Read.All**. Antes de enviarla: pestaña **Authorization** de esta petición → **Get New Access Token** → **Use Token** (no abre login, porque es una app la que consulta, no un usuario).\n- Ejecútala después de registrar un usuario con **Sign up now**: aparece en la lista (pestaña **Visualize**).",
+            "auth": {
+              "type": "oauth2",
+              "oauth2": [
+                {
+                  "key": "tokenName",
+                  "value": "Token Microsoft Graph",
+                  "type": "string"
+                },
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials",
+                  "type": "string"
+                },
+                {
+                  "key": "accessTokenUrl",
+                  "value": "https://login.microsoftonline.com/{{b2cTenant}}.onmicrosoft.com/oauth2/v2.0/token",
+                  "type": "string"
+                },
+                {
+                  "key": "clientId",
+                  "value": "{{graphClientId}}",
+                  "type": "string"
+                },
+                {
+                  "key": "clientSecret",
+                  "value": "{{graphClientSecret}}",
+                  "type": "string"
+                },
+                {
+                  "key": "scope",
+                  "value": "https://graph.microsoft.com/.default",
+                  "type": "string"
+                },
+                {
+                  "key": "client_authentication",
+                  "value": "body",
+                  "type": "string"
+                },
+                {
+                  "key": "addTokenTo",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · Microsoft Graph devolvió los usuarios del tenant B2C\", () => pm.response.to.have.status(200));",
+                  "const lista = pm.response.json().value || [];",
+                  "pm.test('Hay al menos un usuario registrado en B2C', () => pm.expect(lista.length).to.be.above(0));",
+                  "const filas = lista.map(u => {",
+                  "  const id = (u.identities || []).find(i => i.signInType === 'emailAddress');",
+                  "  return { nombre: u.displayName || '-', email: id ? id.issuerAssignedId : '(cuenta de administrador)', creado: u.createdDateTime ? new Date(u.createdDateTime).toLocaleString() : '-' };",
+                  "});",
+                  "pm.visualizer.set(`",
+                  "<style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:6px;text-align:left} th{background:#1F3A5F;color:#fff}</style>",
+                  "<h3>Usuarios registrados en Azure AD B2C ({{filas.length}})</h3>",
+                  "<p>Se registran desde el flujo de usuario (Sign up now). Nuestra API no guarda usuarios ni contraseñas.</p>",
+                  "<table><tr><th>Nombre</th><th>Email (inicio de sesión)</th><th>Creado</th></tr>",
+                  "{{#each filas}}<tr><td>{{this.nombre}}</td><td>{{this.email}}</td><td>{{this.creado}}</td></tr>{{/each}}</table>`, { filas });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1 · ms-compras → RDS (con token de B2C)",
+      "description": "## Paso 1 · ms-compras → AWS RDS (MySQL), con token de B2C\n\n```\nPostman (token B2C) ─► API Gateway (autorizador JWT ok) ─► EC2 :8081 ms-compras ─► RDS compras_db\n```\n\n- **Comprar** hace un INSERT en `compra`. El precio sale de la BD, nunca del request. Devuelve el **`numeroResumen`** (id de la compra), que es el número del resumen y el nombre de la carpeta en S3. En **Visualize** se ven los claims del token.\n- **Ver compra** hace un SELECT. Es el mismo endpoint que ms-resumenes llama internamente.\n",
+      "item": [
+        {
+          "name": "1.1 Comprar CON token B2C (INSERT en RDS) · ver claims · guarda numeroResumen",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/compras",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras"
+              ]
+            },
+            "description": "La misma compra de 0.4, ahora **con el token de B2C** (heredado de la colección) → el Gateway la deja pasar.\n\n**Flujo:** Gateway (autorizador JWT ok) → ms-compras → RDS `INSERT INTO compra`.\n\n- El **precio** lo toma ms-compras de la tabla `evento` (no del body).\n- El `numeroResumen` se guarda en `{{numeroResumen}}` y se usa en todo el paso 2.\n- Pestaña **Visualize**: los claims del token que validó el Gateway (`iss`, `aud`, `scp`, `exp`, usuario).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombreCliente\": \"Ana Pérez\",\n  \"emailCliente\": \"ana@correo.cl\",\n  \"nombreEvento\": \"Festival de Jazz\",\n  \"cantidad\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 · el Gateway aceptó el token de B2C y ms-compras guardó la compra en RDS\", () => pm.response.to.have.status(201));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('numeroResumen', r.numeroResumen);",
+                  "pm.test('Total = precio de la BD × cantidad', () => pm.expect(Number(r.precioTotal)).to.eql(Number(r.precioUnitario) * r.cantidad));",
+                  "console.log('numeroResumen guardado =', r.numeroResumen, '→ carpeta en S3:', r.numeroResumen + '/');",
+                  "// Muestra los claims del access token de Azure AD B2C (pestaña Visualize de la respuesta).",
+                  "function leerToken() {",
+                  "  const h = pm.request.headers.get('Authorization') || '';",
+                  "  if (h.startsWith('Bearer ')) return h.substring(7);",
+                  "  try { if (pm.request.auth && pm.request.auth.type === 'oauth2') return pm.request.auth.parameters().get('accessToken'); } catch (e) {}",
+                  "  return '';",
+                  "}",
+                  "function decodificar(jwt) {",
+                  "  let b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+                  "  while (b64.length % 4) b64 += '=';",
+                  "  return JSON.parse(CryptoJS.enc.Base64.parse(b64).toString(CryptoJS.enc.Utf8));",
+                  "}",
+                  "const token = leerToken();",
+                  "if (!token) {",
+                  "  pm.visualizer.set('<p style=\"font-family:sans-serif\">Postman no expuso el token al script. Cópialo desde Authorization → Current Token y pégalo en <b>https://jwt.ms</b>.</p>');",
+                  "} else {",
+                  "  const c = decodificar(token);",
+                  "  const filas = [",
+                  "    { claim: 'iss', valor: c.iss, uso: 'Emisor. Debe ser IGUAL al Issuer URL del autorizador JWT (formato /tfp/)' },",
+                  "    { claim: 'aud', valor: c.aud, uso: 'Audiencia. Debe ser IGUAL al Audience del autorizador (client ID de la app)' },",
+                  "    { claim: 'scp', valor: c.scp, uso: 'Scope. El Gateway lo exige en cada ruta (Authorization scopes)' },",
+                  "    { claim: 'exp', valor: new Date(c.exp * 1000).toLocaleString(), uso: 'Vencimiento. Después de esta hora el Gateway responde 401' },",
+                  "    { claim: 'sub', valor: c.sub, uso: 'ID único del usuario en B2C' },",
+                  "    { claim: 'name', valor: c.name || '-', uso: 'Nombre (Display Name del user flow)' },",
+                  "    { claim: 'emails', valor: (c.emails || []).join(', ') || '-', uso: 'Email del usuario registrado en B2C' },",
+                  "    { claim: 'tfp', valor: c.tfp || c.acr || '-', uso: 'User flow que emitió el token' }",
+                  "  ];",
+                  "  pm.test('Token: scp contiene el scope de la API', () => pm.expect(String(c.scp || '')).to.not.equal(''));",
+                  "  pm.test('Token: iss en formato tfp (compatible con API Gateway)', () => pm.expect(c.iss).to.include('/tfp/'));",
+                  "  pm.visualizer.set(`",
+                  "  <style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:6px;text-align:left;vertical-align:top} th{background:#1F3A5F;color:#fff} td:first-child{font-family:monospace;font-weight:bold}</style>",
+                  "  <h3>Access token emitido por Azure AD B2C</h3>",
+                  "  <p>El API Gateway validó la <b>firma</b> (claves JWKS de B2C), el <b>iss</b>, el <b>aud</b>, la <b>expiración</b> y el <b>scp</b> antes de dejar pasar la petición a ms-compras.</p>",
+                  "  <table><tr><th>Claim</th><th>Valor</th><th>Para qué sirve</th></tr>",
+                  "  {{#each filas}}<tr><td>{{this.claim}}</td><td>{{this.valor}}</td><td>{{this.uso}}</td></tr>{{/each}}</table>`, { filas });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "201 compra creada",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/compras",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "compras"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"numeroResumen\": 1,\n  \"nombreCliente\": \"Ana Pérez\",\n  \"emailCliente\": \"ana@correo.cl\",\n  \"nombreEvento\": \"Festival de Jazz\",\n  \"fechaEvento\": \"2027-03-12\",\n  \"cantidad\": 2,\n  \"precioUnitario\": 18000.0,\n  \"precioTotal\": 36000.0,\n  \"fechaCompra\": \"2026-11-12T22:30:00\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "1.2 Ver compra (SELECT en RDS)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/compras/{{numeroResumen}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "compras",
+                "{{numeroResumen}}"
+              ]
+            },
+            "description": "**Flujo:** Gateway (con token) → ms-compras → RDS. Es el **mismo endpoint** que ms-resumenes llama por la red interna de Docker (`http://ms-compras:8081`) para armar el resumen."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · la compra existe en RDS\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2 · ms-resumenes → archivo y S3 (requisitos del caso)",
+      "description": "## Paso 2 · ms-resumenes: los 5 endpoints del caso (BD → archivo → S3)\n\nAsí se mueven los datos **entre la base de datos y el bucket**:\n\n```\nPOST /api/resumenes/{n}/s3\n  Postman ─► API Gateway (JWT ok) ─► ms-resumenes :8082\n                                        │ 1) GET http://ms-compras:8081/api/compras/{n}   (red interna Docker)\n                                        │        └─► ms-compras ─► RDS: SELECT compra + evento\n                                        │ 2) arma el texto del resumen\n                                        └ 3) S3 PutObject  →  bucket/{n}/resumen-compra-{n}.txt\n```\n\n| Requisito del caso | Endpoint | Lee de | Escribe en |\n|---|---|---|---|\n| Archivo físico para guardar en el PC | `GET /api/resumenes/{n}` | RDS (vía ms-compras) | Tu computador (descarga) |\n| Subir a S3 en carpeta = número | `POST /api/resumenes/{n}/s3` | RDS (vía ms-compras) | **S3** `{n}/` |\n| Modificar | `PUT /api/resumenes/{n}/s3` | Archivo que envías | **S3** (reemplaza; Versioning guarda la anterior) |\n| Descargar | `GET /api/resumenes/{n}/s3` | **S3** | Tu computador |\n| Borrar | `DELETE /api/resumenes/{n}/s3` | – | **S3** (elimina) |\n\n**Tip para el video:** después de 2.2, 2.3 y 2.5, muestra la consola de S3 (carpeta `{n}/` y *Show versions*).\n",
+      "item": [
+        {
+          "name": "2.1 Generar resumen como ARCHIVO físico (Send and Download)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}"
+              ]
+            },
+            "description": "**Requisito 1.** Usa la flecha junto a **Send → Send and Download** para guardar `resumen-compra-{n}.txt` en tu computador.\n\n**Flujo:** Gateway → ms-resumenes → (HTTP interno) ms-compras → RDS → ms-resumenes arma el texto → respuesta con `Content-Disposition: attachment`. **No toca S3.**"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · ms-resumenes generó el archivo con datos de RDS\", () => pm.response.to.have.status(200));",
+                  "pm.test('Es una descarga (Content-Disposition: attachment)', () => pm.expect(pm.response.headers.get('Content-Disposition')).to.include('attachment'));",
+                  "pm.test('El contenido trae el número de resumen', () => pm.expect(pm.response.text()).to.include('N° ' + pm.collectionVariables.get('numeroResumen')));"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 archivo",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "resumenes",
+                    "{{numeroResumen}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "text",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "text/plain; charset=UTF-8"
+                },
+                {
+                  "key": "Content-Disposition",
+                  "value": "attachment; filename=\"resumen-compra-1.txt\""
+                }
+              ],
+              "body": "============================================\n        RESUMEN DE COMPRA N° 1\n============================================\nFecha de compra : 12-11-2026 22:30\nCliente         : Ana Pérez\nEmail           : ana@correo.cl\n\nEvento          : Festival de Jazz\nFecha evento    : 12-03-2027\nCantidad        : 2\nPrecio unitario : $18.000\nTOTAL           : $36.000\n============================================\n"
+            }
+          ]
+        },
+        {
+          "name": "2.2 SUBIR resumen a S3 (RDS → S3, carpeta = número)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}",
+                "s3"
+              ]
+            },
+            "description": "**Requisito 2.** Aquí se conectan **la BD y el bucket**:\n\n1. ms-resumenes pide la compra a ms-compras → **RDS**.\n2. Arma el resumen.\n3. Lo sube a **S3** con la clave `{n}/resumen-compra-{n}.txt` → la carpeta del bucket es el número del resumen.\n\nLa clave la arma el **servidor**; el cliente no puede elegir bucket ni ruta. Muestra la consola de S3 después de ejecutarla."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 · el resumen quedó en S3\", () => pm.response.to.have.status(201));",
+                  "const a = pm.response.json(); const n = pm.collectionVariables.get('numeroResumen');",
+                  "pm.test('S3: carpeta = número del resumen (' + n + '/)', () => pm.expect(a.carpeta).to.eql(n + '/'));",
+                  "pm.test('S3: key = ' + n + '/resumen-compra-' + n + '.txt', () => pm.expect(a.key).to.eql(n + '/resumen-compra-' + n + '.txt'));"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "201 subido",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+                  "host": [
+                    "{{gatewayUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "resumenes",
+                    "{{numeroResumen}}",
+                    "s3"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"key\": \"1/resumen-compra-1.txt\",\n  \"carpeta\": \"1/\",\n  \"nombreArchivo\": \"resumen-compra-1.txt\",\n  \"contentType\": \"text/plain; charset=UTF-8\",\n  \"tamanoBytes\": 412\n}"
+            }
+          ]
+        },
+        {
+          "name": "2.3 MODIFICAR resumen en S3 (form-data file .txt)",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}",
+                "s3"
+              ]
+            },
+            "description": "**Requisito 3 (modificar).** Body → **form-data** → clave `file` (tipo **File**) → `postman/resumen-corregido.txt`.\n\n**Flujo:** Gateway → ms-resumenes → verifica que el archivo exista en S3 → valida (.txt, máx. 1 MB) → **reemplaza** el objeto en la misma clave. Con **Versioning** activo, S3 conserva la versión anterior (*Show versions*).",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "resumen-corregido.txt",
+                  "description": "Elige postman/resumen-corregido.txt"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · S3 reemplazó el archivo por la versión corregida\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.4 DESCARGAR resumen desde S3",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}",
+                "s3"
+              ]
+            },
+            "description": "**Requisito 3 (descargar).** **Flujo:** Gateway → ms-resumenes → **S3 GetObject**. No consulta RDS: devuelve lo que está guardado en el bucket (debe venir la versión CORREGIDA)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 · se descargó el archivo desde S3\", () => pm.response.to.have.status(200));",
+                  "pm.test('Trae el contenido modificado en 2.3', () => pm.expect(pm.response.text()).to.include('CORREGIDO'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.5 BORRAR resumen de S3",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}",
+                "s3"
+              ]
+            },
+            "description": "**Requisito 3 (borrar).** **Flujo:** Gateway → ms-resumenes → verifica que exista → **S3 DeleteObject**. La compra sigue en RDS: solo se borra el archivo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"204 · el archivo se eliminó de S3\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2.6 Descargar después de borrar → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}",
+                "s3"
+              ]
+            },
+            "description": "Comprueba que el archivo ya no está en S3. Para volver a tenerlo, ejecuta otra vez **2.2** (se regenera desde RDS)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404 · el archivo ya no existe en S3\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3 · Errores y límites",
+      "description": "## Paso 3 · Pruebas de error y límites\n\n- Compra inexistente → **404** (ms-resumenes le pregunta a ms-compras y este responde 404).\n- PUT sin archivo → **400** (validación).\n- **Acceso directo a la EC2** sin pasar por el Gateway: responde **200**. El autorizador solo protege la URL del Gateway; con el extra `GATEWAY_SECRET` activo, responde **403**.\n",
+      "item": [
+        {
+          "name": "3.1 Resumen de compra inexistente → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/999999",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "999999"
+              ]
+            },
+            "description": "ms-resumenes pregunta a ms-compras por la compra 999999; ms-compras responde 404 y ms-resumenes lo propaga."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404 · la compra no existe en RDS\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.2 Modificar sin archivo → 400",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{gatewayUrl}}/api/resumenes/{{numeroResumen}}/s3",
+              "host": [
+                "{{gatewayUrl}}"
+              ],
+              "path": [
+                "api",
+                "resumenes",
+                "{{numeroResumen}}",
+                "s3"
+              ]
+            },
+            "description": "PUT sin la parte `file`: el microservicio responde **400** con un mensaje que explica cómo enviarlo. (Si el archivo no está en S3 primero responde 404: ejecuta 2.2 antes).",
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 o 404 · validación del archivo', () => pm.expect(pm.response.code).to.be.oneOf([400, 404]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3.3 EC2 directo sin Gateway ni token (límite de la arquitectura)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://{{ec2Ip}}:8081/api/compras/{{numeroResumen}}",
+              "host": [
+                "http://{{ec2Ip}}:8081"
+              ],
+              "path": [
+                "api",
+                "compras",
+                "{{numeroResumen}}"
+              ]
+            },
+            "description": "Pide una compra (ruta **protegida** en el Gateway) directo a la IP pública de la EC2, **saltándose el API Gateway** y sin token. Responde **200** porque el autorizador solo protege la URL del Gateway (igual que en la demo del profe). Con el extra `GATEWAY_SECRET` activo responde **403**.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 (abierto) o 403 (con GATEWAY_SECRET)', () => pm.expect(pm.response.code).to.be.oneOf([200, 403]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
