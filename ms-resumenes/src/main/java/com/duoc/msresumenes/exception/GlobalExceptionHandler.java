@@ -23,8 +23,7 @@ import software.amazon.awssdk.core.exception.SdkException;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-
-  
+    
 
     // No existe (404), archivo o número inválido (400), compra ajena (403), ms-compras caído (503)
     @ExceptionHandler(ApiException.class)
@@ -64,7 +63,7 @@ public class GlobalExceptionHandler {
 
     // Errores AWS
 
-    // Credenciales de AWS Academy vencidas, bucket inexistente, sin permisos...
+    // Credenciales de AWS Academy vencidas, bucket inexistente, sin permisos
     @ExceptionHandler({ io.awspring.cloud.s3.S3Exception.class, SdkException.class })
     public ResponseEntity<Map<String, Object>> errorS3(RuntimeException ex) {
         log.error("Error al comunicarse con AWS S3", ex);

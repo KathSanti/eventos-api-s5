@@ -1,131 +1,127 @@
-# Eventos Microservicios · AWS API Gateway + Azure AD B2C
+# Eventos Microservicios · AWS API Gateway + EntraID
 
-Desarrollo Cloud Native (CDY2204) · Semana 4 · Actividad "Configurando IDaaS y API Manager".
 
-Sistema de venta de entradas dividido en **2 microservicios Spring Boot**, desplegados con **GitHub Actions** en una
-**EC2**, con datos en **RDS** y archivos en **S3**. Todos los endpoints se publican en **AWS API Gateway (HTTP API)**
-y se autentican con **Azure AD B2C** (IDaaS). El backend ya **no** usa Spring Security ni JWT propio.
+Sistema de venta de entradas para eventos. Separación en 2 microservicios Spring Boot que corren en una EC2 con Docker. Las compras se guardan en RDS (MySQL) y los resúmenes de compra en S3. Para autenticar se usa Microsoft Entra ID (login y roles) y todas las peticiones pasan por AWS API Gateway. El despliegue es automático con GitHub Actions.
 
-## Arquitectura
+## Microservicios
+
+Para ver detalle de cada microservicio haz click en su nombre
+
+| Microservicio | Qué hace | Guarda en | Puerto |
+|---|---|---|---|
+| [**ms-compras**](ms-compras/README.md) | Eventos y compras de entradas | RDS MySQL | 8081 |
+| [**ms-resumenes**](ms-resumenes/README.md) | Resumen de compra (archivo y S3) | S3 | 8082 |
+
+
+## Flujo completo
+
+```mermaid
+flowchart LR
+    U["Usuario<br/>(Postman o frontend)"]
+    E["Microsoft Entra ID<br/>login + roles"]
+    G["AWS API Gateway<br/>autorizador JWT"]
+
+    subgraph EC2["AWS EC2 · Docker Compose (red interna)"]
+        C["ms-compras :8081<br/>SecurityConfig + @PreAuthorize"]
+        R["ms-resumenes :8082<br/>SecurityConfig + @PreAuthorize"]
+    end
+
+    DB[("AWS RDS MySQL<br/>compras_db")]
+    S3[("AWS S3<br/>resúmenes .txt<br/>carpeta = n° de compra")]
+
+    U -- "1 · inicia sesión" --> E
+    E -- "2 · token JWT con roles" --> U
+    U -- "3 · petición + token" --> G
+    G -- "4 · /api/eventos<br/>/api/compras" --> C
+    G -- "4 · /api/resumenes" --> R
+    R -. "5 · HTTP interno<br/>http://ms-compras:8081<br/>+ mismo token" .-> C
+    C --> DB
+    R --> S3
+```
+
+
+1. **Ver eventos:** `GET /api/eventos` público, no pide iniciar sesión.
+2. **Login:** para comprar, el usuario inicia sesión en Entra ID y recibe un **token (JWT)** con sus roles.
+3. **API Gateway:** todas las peticiones van al Gateway con el token. El autorizador revisa que sea válido; si no, responde **401** y la petición ni siquiera llega a la EC2.
+4. **Microservicio:** Spring Security vuelve a validar el token y revisa el **rol** con `@PreAuthorize`.
+5. **Comunicación interna (línea punteada):** ms-resumenes le pide los datos de la compra a ms-compras por **HTTP interno**, dentro de la red de Docker en la misma EC2 (`http://ms-compras:8081`). Esta llamada **no pasa por el API Gateway**. Como ms-compras también exige token, ms-resumenes le **reenvía el mismo token del usuario** (*token relay*), y así ms-compras revisa que la compra sea de esa persona y siga activa antes de tocar S3.
+
+## Roles
+
+Los roles se asignan en Entra ID (*Aplicaciones empresariales → Usuarios y grupos*) y llegan en el claim `roles` del token.
+
+| Rol | Qué puede hacer |
+|---|---|
+| **ADMIN** | Todo: crear eventos, comprar, ver cualquier compra (incluso desactivadas), desactivar compras y borrar resúmenes de S3 |
+| **VENDEDOR** | Crear eventos |
+| **CLIENTE** | Comprar, ver sus compras y manejar sus resúmenes |
+
+
+## Seguridad en capas
+
+Cada petición tiene que pasar 4 filtros. Si falla en uno, se corta ahí mismo:
 
 ```text
-   Postman ──(1) login──────────────────────────► Azure AD B2C (IDaaS)
-      │      ◄──────────── access token (JWT) ──┘
-      │
-      │ (2) Authorization: Bearer <token>
-      ▼
-   AWS API Gateway (HTTP API) ── autorizador JWT: valida firma, iss, aud, exp y scope
-      │                                 │
-      │ /api/eventos, /api/compras/**   │ /api/resumenes/**
-      ▼                                 ▼
- ┌──────────────── EC2 (Docker Compose) ──────────────────────┐
- │  ms-compras :8081  ◄── HTTP interno ──  ms-resumenes :8082 │
- └──────┬──────────────────────────────────────────┬──────────┘
-        ▼                                          ▼
-   AWS RDS MySQL (compras_db)            AWS S3 bucket  {numero}/resumen-compra-{numero}.txt
+  Petición con token
+        │
+        ▼
+  1. API Gateway ........ ¿El token es válido? ..................... ✖ 401
+        │ ✔
+        ▼
+  2. SecurityConfig ..... ¿Firma, emisor, audiencia y expiración? .. ✖ 401
+        │ ✔
+        ▼
+  3. @PreAuthorize ...... ¿Tu rol puede usar este endpoint? ........ ✖ 403
+        │ ✔
+        ▼
+  4. Service ............ ¿La compra es tuya y está activa? ........ ✖ 403 / 404
+        │ ✔
+        ▼
+  Respuesta
 ```
 
-## Cómo se separó el proyecto en microservicios
+> Si alguien llama directo a la EC2 saltándose el Gateway, igual recibe **401**: cada microservicio valida el token por su cuenta.
 
-El proyecto de la semana 2 era **un solo backend** (monolito) con login, roles, eventos, compras, clientes y S3.
-Se separó por **responsabilidad** y cada microservicio es **dueño de su propio almacenamiento**:
+## Despliegue (GitHub Actions) pipeline CI/CD 
 
-| Microservicio | Responsabilidad | Almacenamiento | Puerto |
-|---|---|---|---|
-| `ms-compras` | Eventos y compras de entradas | **RDS MySQL** (`compras_db`) | 8081 |
-| `ms-resumenes` | Los 5 endpoints del resumen de compra (archivo y S3) | **S3** | 8082 |
-
-- `ms-resumenes` **no** tiene base de datos: cuando necesita los datos de una compra se los pide a `ms-compras`
-  por HTTP (`GET /api/compras/{numero}`), por la red interna de Docker (`http://ms-compras:8081`).
-- Se **eliminó** todo lo que ahora resuelve Azure AD B2C: `SecurityConfig`, `JwtAuthFilter`, `JwtService`,
-  `AuthController` (registro/login), `Cliente` con contraseña BCrypt, roles, bloqueo por intentos y admin por IP.
-- Como ya no hay usuarios en la BD, la compra guarda `nombreCliente` y `emailCliente`, que llegan en el body.
-
-## Endpoints
-
-Todos se inscriben en el API Gateway con el autorizador de Azure AD B2C.
-
-| Método | Ruta en el Gateway | Microservicio | Qué hace |
-|---|---|---|---|
-| GET | `/api/eventos` | ms-compras | Lista los eventos (se crean 3 de ejemplo al arrancar) |
-| POST | `/api/compras` | ms-compras | Compra entradas → devuelve `numeroResumen` |
-| GET | `/api/compras/{numero}` | ms-compras | Detalle de la compra |
-| GET | `/api/resumenes/{numero}` | ms-resumenes | **Genera el resumen como archivo físico** (.txt descargable) |
-| POST | `/api/resumenes/{numero}/s3` | ms-resumenes | **Sube el resumen a S3** en la carpeta `{numero}/` |
-| PUT | `/api/resumenes/{numero}/s3` | ms-resumenes | **Modifica** el archivo (form-data, campo `file`, .txt) |
-| GET | `/api/resumenes/{numero}/s3` | ms-resumenes | **Descarga** el archivo desde S3 |
-| DELETE | `/api/resumenes/{numero}/s3` | ms-resumenes | **Borra** el archivo de S3 |
-
-`GET /salud` existe en ambos (lo usa el pipeline). No se publica en el Gateway.
-
-Ejemplo de body para comprar:
-
-```json
-{ "nombreCliente": "Ana Pérez", "emailCliente": "ana@correo.cl", "nombreEvento": "Festival de Jazz", "cantidad": 2 }
-```
-
-## Estructura
+Cada push a `main` ejecuta `.github/workflows/deploy.yml`:
 
 ```text
-eventos-microservicios/
-├── .github/workflows/deploy.yml   # tests → docker (2 imágenes) → deploy EC2
-├── deploy/compose.ec2.yml         # lo que corre en la EC2
-├── docker-compose.yml             # prueba local con MySQL
-├── ms-compras/                    # Spring Boot + JPA (RDS)
-├── ms-resumenes/                  # Spring Boot + S3 + RestClient
-└── postman/                       # colección + archivo para el PUT
+  push a main
+        │
+        ▼
+  1. tests ........ mvn verify de cada microservicio
+        │
+        ▼
+  2. docker ....... publica las 2 imágenes en Docker Hub
+        │
+        ▼
+  3. deploy-ec2 ... copia el compose, hace pull + up y prueba /salud (8081 y 8082)
 ```
 
-## Ejecutar en local
+### Secrets
 
-```bash
-cp .env.example .env              # completa S3_BUCKET y las 3 credenciales de AWS Academy
+*Settings → Secrets and variables → Actions → pestaña **Secrets***
 
-# Opción A: cada microservicio por separado (ms-compras usa H2 en memoria)
-cd ms-compras   && ./mvnw spring-boot:run      # http://localhost:8081
-cd ms-resumenes && ./mvnw spring-boot:run      # http://localhost:8082  (en otra terminal)
-
-# Opción B: todo con Docker (MySQL local en vez de RDS)
-docker compose up --build
-```
-
-En local no hay Gateway ni token: las peticiones van directo a `localhost:8081` / `localhost:8082`.
-
-## CI/CD (GitHub Actions)
-
-`.github/workflows/deploy.yml` mantiene el esquema del workflow del profe:
-
-1. **tests**: `mvn verify` de cada microservicio (matrix), en PRs y push a `main`.
-2. **docker**: publica `DOCKERHUB_USERNAME/eventos-ms-compras` y `eventos-ms-resumenes` (tags `latest` y `sha`).
-3. **deploy-ec2**: copia `deploy/compose.ec2.yml` por SCP, hace `pull` + `up` por SSH y prueba `/salud` en 8081 y 8082.
-
-*Settings → Secrets and variables → Actions*:
-
-| Secret | Valor |
+| Para qué | Secrets |
 |---|---|
-| `DOCKERHUB_USERNAME` · `DOCKERHUB_TOKEN` | Usuario y token de Docker Hub (Read & Write) |
-| `EC2_HOST` · `EC2_USER` · `EC2_SSH_KEY` | IP elástica · `ubuntu` · contenido completo de `labsuser.pem` |
-| `DB_HOST` · `DB_USER` · `DB_PASSWORD` | Endpoint de RDS · usuario maestro · contraseña maestra |
-| `AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY` · `AWS_SESSION_TOKEN` | Learner Lab → AWS Details → AWS CLI (cambian en cada sesión) |
-| `GATEWAY_SECRET` | *Opcional* (ver "Extra") |
+| Docker Hub | `DOCKERHUB_USERNAME` · `DOCKERHUB_TOKEN` |
+| EC2 | `EC2_HOST` · `EC2_USER` · `EC2_SSH_KEY` |
+| RDS | `DB_HOST` · `DB_USER` · `DB_PASSWORD` |
+| AWS Academy (S3) | `AWS_ACCESS_KEY_ID` · `AWS_SECRET_ACCESS_KEY` · `AWS_SESSION_TOKEN` |
 
-| Variable | Valor |
+### Variables
+
+*Settings → Secrets and variables → Actions → pestaña **Variables***
+
+| Para qué | Variable |
 |---|---|
-| `S3_BUCKET` | Nombre de tu bucket |
-| `AWS_REGION` | `us-east-1` (opcional) |
-| `DB_NAME` | `compras_db` (opcional) |
+| Nombre Bucket S3 | `S3_BUCKET` |
+| Región de AWS | `AWS_REGION` - (por defecto `us-east-1`) |
+| Nombre de la BD | `DB_NAME` - (por defecto `compras_db`) |
+| Entra ID: emisor del token | `ENTRA_ISSUER` |
+| Entra ID: llaves públicas | `ENTRA_JWKS_URI` |
+| Entra ID: audiencia | `ENTRA_AUDIENCE` |
 
-> En cada sesión nueva del Learner Lab: actualiza los 3 secrets `AWS_*` y haz **Actions → Run workflow**.
+> Los **secrets** son datos privados (contraseñas, llaves) y GitHub los oculta. Las **variables** son datos públicos de configuración. Ninguno queda escrito en el repositorio: en la EC2 se guardan en un `.env` con permisos 60
 
-## Configuración en AWS y Azure (resumen)
-
-El paso a paso completo, con espacios para las capturas, está en **`docs/Guia-paso-a-paso-Semana4.docx`**.
-
-1. **S3**: bucket privado con Versioning.
-2. **EC2**: Security Group con 22, 8081 y 8082 abiertos; Docker instalado; IP elástica.
-3. **RDS**: MySQL conectado a la EC2 (sin acceso público).
-4. **GitHub**: secrets → push a `main` → verificar `http://IP:8081/salud` y `http://IP:8082/salud`.
-5. **Azure AD B2C**: user flow con issuer en formato `tfp`, app de la API con scope expuesto y redirect URI de Postman.
-6. **API Gateway (HTTP API)**: 5 integraciones HTTP hacia la EC2, 8 rutas, autorizador JWT
-   (`issuer` = `iss` del token, `audience` = client ID de la API) asignado a todas las rutas.
-   

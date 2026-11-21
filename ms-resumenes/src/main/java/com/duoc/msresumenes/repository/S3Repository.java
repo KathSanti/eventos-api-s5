@@ -8,7 +8,7 @@ import com.duoc.msresumenes.model.Asset;
  */
 public interface S3Repository {
 
-    /** Sube (o reemplaza, si la clave ya existe) un archivo. */
+    // Sube o reemplaza, si la clave ya existe) un archivo.
     Asset subir(String key, byte[] contenido, String contentType);
 
     byte[] descargar(String key);

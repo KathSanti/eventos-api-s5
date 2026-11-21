@@ -10,23 +10,19 @@ import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 
 import com.duoc.msresumenes.client.ComprasClient;
 import com.duoc.msresumenes.dto.ArchivoResumen;
 import com.duoc.msresumenes.dto.CompraDto;
-import com.duoc.msresumenes.exception.ArchivoInvalidoException;
-import com.duoc.msresumenes.exception.RecursoNoEncontradoException;
-import com.duoc.msresumenes.exception.SolicitudInvalidaException;
+import com.duoc.msresumenes.exception.ApiException;
 import com.duoc.msresumenes.model.Asset;
 import com.duoc.msresumenes.repository.S3Repository;
 import com.duoc.msresumenes.service.GeneradorResumen;
 import com.duoc.msresumenes.service.ResumenService;
 
-/**
- * Pruebas unitarias SIN AWS y SIN ms-compras: se reemplazan por dobles de prueba
- * (un ms-compras falso y un "bucket" en memoria). Por eso ComprasClient y S3Repository son interfaces.
- */
+// Pruebas unitarias ResumenService simulando 
 class ResumenServiceTest {
 
     private S3EnMemoria s3;
@@ -71,16 +67,20 @@ class ResumenServiceTest {
     @Test
     void modificarSinHaberSubidoResponde404() {
         MockMultipartFile archivo = new MockMultipartFile("file", "a.txt", "text/plain", "x".getBytes());
+
         assertThatThrownBy(() -> servicio.modificarEnS3(15L, archivo))
-                .isInstanceOf(RecursoNoEncontradoException.class);
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.NOT_FOUND);
     }
 
     @Test
     void modificarConUnArchivoQueNoEsTxtResponde400() {
         servicio.subirAS3(15L);
         MockMultipartFile pdf = new MockMultipartFile("file", "a.pdf", "application/pdf", "x".getBytes());
+
         assertThatThrownBy(() -> servicio.modificarEnS3(15L, pdf))
-                .isInstanceOf(ArchivoInvalidoException.class);
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
     }
 
     @Test
@@ -89,28 +89,57 @@ class ResumenServiceTest {
 
         servicio.eliminarDeS3(15L);
 
-        assertThatThrownBy(() -> servicio.descargarDeS3(15L)).isInstanceOf(RecursoNoEncontradoException.class);
-        assertThatThrownBy(() -> servicio.eliminarDeS3(15L)).isInstanceOf(RecursoNoEncontradoException.class);
+        assertThatThrownBy(() -> servicio.descargarDeS3(15L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.NOT_FOUND);
     }
 
     @Test
     void compraInexistenteResponde404() {
-        assertThatThrownBy(() -> servicio.subirAS3(99L)).isInstanceOf(RecursoNoEncontradoException.class);
+        assertThatThrownBy(() -> servicio.subirAS3(99L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.NOT_FOUND);
     }
 
     @Test
     void numeroMenorQueUnoResponde400() {
-        assertThatThrownBy(() -> servicio.generarArchivo(0L)).isInstanceOf(SolicitudInvalidaException.class);
+        assertThatThrownBy(() -> servicio.generarArchivo(0L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_REQUEST);
     }
 
-    // ---------------- Dobles de prueba ----------------
+    //Seguridad
 
-    /** ms-compras falso: solo existe la compra N° 15. */
+    @Test
+    void compraAjenaNoSePuedeDescargarAunqueEsteEnS3() {
+        s3.subir("16/resumen-compra-16.txt", "datos de otra persona".getBytes(), "text/plain");
+
+        assertThatThrownBy(() -> servicio.descargarDeS3(16L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.FORBIDDEN);       // 403
+    }
+
+    @Test
+    void compraDesactivadaYaNoSeVeEnElBucket() {
+        // El archivo sigue en S3, pero ms-compras dice "no existe" (está desactivada)
+        s3.subir("99/resumen-compra-99.txt", "compra desactivada".getBytes(), "text/plain");
+
+        assertThatThrownBy(() -> servicio.descargarDeS3(99L))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.NOT_FOUND);       // 404
+    }
+
+  
+
+    // ms-compras falso: la 15 es del usuario, la 16 es de otra persona, el resto no existe o está desactivada
     static class ComprasFalso implements ComprasClient {
         @Override
         public CompraDto obtenerCompra(Long numero) {
+            if (numero == 16L) {
+                throw ApiException.prohibido("La compra N° 16 no te pertenece");
+            }
             if (numero != 15L) {
-                throw new RecursoNoEncontradoException("No existe la compra N° " + numero);
+                throw ApiException.noEncontrado("No existe la compra N° " + numero);
             }
             return new CompraDto(15L, "Ana Pérez", "ana@correo.cl", "Festival de Jazz", "2027-03-20",
                     2, new BigDecimal("18000"), new BigDecimal("36000"), "2026-11-12T10:30:00");

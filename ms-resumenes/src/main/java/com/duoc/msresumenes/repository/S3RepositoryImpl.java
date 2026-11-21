@@ -13,7 +13,7 @@ import com.duoc.msresumenes.model.Asset;
 import io.awspring.cloud.s3.ObjectMetadata;
 import io.awspring.cloud.s3.S3Template;
 
-/** Implementación con S3Template (Spring Cloud AWS). Igual que en la semana 2. */
+//Implementación con S3Template 
 @Repository
 public class S3RepositoryImpl implements S3Repository {
 
