@@ -9,28 +9,34 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-//Traduce las excepciones a respuestas JSON a formato que le corresponde
+// Traduce las excepciones a respuestas JSON 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(RecursoNoEncontradoException.class)
-    public ResponseEntity<Map<String, Object>> noEncontrado(RecursoNoEncontradoException ex) {
-        return respuesta(HttpStatus.NOT_FOUND, ex.getMessage());
+  
+    // Compra no existe (404), evento duplicado o no disponible (409), compra ajena (403)
+    @ExceptionHandler(ApiException.class)
+    public ResponseEntity<Map<String, Object>> errorDeNegocio(ApiException ex) {
+        return respuesta(ex.getStatus(), ex.getMessage());
     }
 
-    @ExceptionHandler(EventoNoDisponibleException.class)
-    public ResponseEntity<Map<String, Object>> noDisponible(EventoNoDisponibleException ex) {
-        return respuesta(HttpStatus.CONFLICT, ex.getMessage());
+
+    // @PreAuthorize: tiene token, pero no tiene el rol 
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Map<String, Object>> sinRol(AccessDeniedException ex) {
+        return respuesta(HttpStatus.FORBIDDEN, "No tienes el rol necesario para esta acción");
     }
 
+    // @Valid: un campo del body no cumple (@NotBlank, @Email, @Min...)
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> validacion(MethodArgumentNotValidException ex) {
         String mensaje = ex.getBindingResult().getFieldErrors().stream()
@@ -40,19 +46,23 @@ public class GlobalExceptionHandler {
         return respuesta(HttpStatus.BAD_REQUEST, mensaje);
     }
 
+    // El body no es un JSON válido error sintaxis 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> jsonInvalido(HttpMessageNotReadableException ex) {
         return respuesta(HttpStatus.BAD_REQUEST, "El cuerpo de la petición no es un JSON válido");
     }
 
+    // Parámetro con formato malo, por ejemplo /api/compras/abc
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<Map<String, Object>> tipoInvalido(MethodArgumentTypeMismatchException ex) {
         return respuesta(HttpStatus.BAD_REQUEST, "Formato inválido para el parámetro '" + ex.getName() + "'");
     }
 
+    
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> general(Exception ex) {
-        // Las excepciones propias de Spring MVC (404 de ruta, 405, 415...) ya traen su código HTTP.
+      
         if (ex instanceof ErrorResponse errorResponse) {
             HttpStatus status = HttpStatus.resolve(errorResponse.getStatusCode().value());
             if (status != null) {
@@ -63,6 +73,7 @@ public class GlobalExceptionHandler {
         return respuesta(HttpStatus.INTERNAL_SERVER_ERROR, "Error interno del servidor");
     }
 
+    // Arma el JSON de respuesta, igual para todos los errores
     private ResponseEntity<Map<String, Object>> respuesta(HttpStatus status, String mensaje) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timestamp", LocalDateTime.now().toString());
@@ -71,9 +82,4 @@ public class GlobalExceptionHandler {
         body.put("mensaje", mensaje);
         return ResponseEntity.status(status).body(body);
     }
-
-    @ExceptionHandler(EventoDuplicadoException.class)
-    public ResponseEntity<Map<String, Object>> duplicado(EventoDuplicadoException ex) {
-    return respuesta(HttpStatus.CONFLICT, ex.getMessage());   // 409
-}
 }
