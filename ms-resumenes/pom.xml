@@ -38,8 +38,7 @@
 			<optional>true</optional>
 		</dependency>
 
-		<!-- Este microservicio NO tiene base de datos (su almacenamiento es S3)
-		     y NO tiene Spring Security (la autenticación la hacen Azure AD B2C + API Gateway). -->
+		<!-- Este microservicio NO tiene base de datos (su almacenamiento es S3)-->
 
 		<!-- Tests -->
 		<dependency>
@@ -51,6 +50,12 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
+		</dependency>
+
+		<!-- Spring Security como Resource Server: valida el JWT de Entra ID -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
 		</dependency>
 	</dependencies>
 
