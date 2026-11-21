@@ -2,23 +2,21 @@
 #  Build, Test and Deploy - Eventos Microservicios
 #  (adaptado del workflow del profe: cloud-native-semana4 / deploy.yml)
 #
-#  Mismo esquema de 3 jobs, pero ahora para 2 microservicios (matrix):
+#  Mismo esquema de 3 jobs, pero ahora para 2 microservicios:
 #    1) tests      -> mvn verify de ms-compras y ms-resumenes (en PRs y push a main)
 #    2) docker     -> construye y publica 2 imágenes en Docker Hub (latest + sha)
 #    3) deploy-ec2 -> copia el compose a la EC2, hace pull/up y prueba /salud en 8081 y 8082
-#
-#  El API Gateway y Azure AD B2C se configuran A MANO (ver la guía), no en CI/CD.
-#
-#  Secrets (Settings -> Secrets and variables -> Actions -> Secrets):
+
+#.   GITHUB ACTIONS--------------------------------------------------------------------
 #    DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
 #    EC2_HOST, EC2_USER, EC2_SSH_KEY
 #    DB_HOST, DB_USER, DB_PASSWORD                                 (AWS RDS)
 #    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN   (Learner Lab, para S3)
-#    GATEWAY_SECRET                                                (opcional)
 #  Variables (pestaña Variables):
 #    S3_BUCKET   (obligatoria)
 #    AWS_REGION  (opcional, por defecto us-east-1)
 #    DB_NAME     (opcional, por defecto compras_db)
+#    ENTRA_ISSUER, ENTRA_JWKS_URI, ENTRA_AUDIENCE (para la autenticación con Azure Entra ID)
 # =====================================================================
 name: Build, Test and Deploy - Eventos Microservicios
 
@@ -112,14 +110,16 @@ jobs:
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           S3_BUCKET: ${{ vars.S3_BUCKET }}
+          ENTRA_ISSUER: ${{ vars.ENTRA_ISSUER }}
+          ENTRA_JWKS_URI: ${{ vars.ENTRA_JWKS_URI }}
+          ENTRA_AUDIENCE: ${{ vars.ENTRA_AUDIENCE }}
         run: |
-          for v in DOCKERHUB_USERNAME DOCKERHUB_TOKEN EC2_HOST EC2_USER EC2_SSH_KEY DB_HOST DB_USER DB_PASSWORD S3_BUCKET; do
+          for v in DOCKERHUB_USERNAME DOCKERHUB_TOKEN EC2_HOST EC2_USER EC2_SSH_KEY DB_HOST DB_USER DB_PASSWORD S3_BUCKET ENTRA_ISSUER ENTRA_JWKS_URI ENTRA_AUDIENCE; do
             test -n "${!v}" || { echo "::error::Falta el secret/variable $v"; exit 1; }
           done
           echo "Secrets OK"
 
-      # Si cargaste las credenciales del Learner Lab, revisa que sigan vigentes ANTES de desplegar
-      # (vencen en cada sesión; si están vencidas, los endpoints de S3 responderían 502).
+  
       - name: Verificar credenciales de AWS Academy y bucket
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -162,12 +162,14 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
-          GATEWAY_SECRET: ${{ secrets.GATEWAY_SECRET }}
+          ENTRA_ISSUER: ${{ vars.ENTRA_ISSUER }}
+          ENTRA_JWKS_URI: ${{ vars.ENTRA_JWKS_URI }}
+          ENTRA_AUDIENCE: ${{ vars.ENTRA_AUDIENCE }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,IMAGE_TAG,DB_HOST,DB_USER,DB_PASSWORD,DB_NAME,AWS_REGION,S3_BUCKET,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,GATEWAY_SECRET
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,IMAGE_TAG,DB_HOST,DB_USER,DB_PASSWORD,DB_NAME,AWS_REGION,S3_BUCKET,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN,ENTRA_ISSUER,ENTRA_JWKS_URI,ENTRA_AUDIENCE
           command_timeout: 15m
           script: |
             set -eu
@@ -188,7 +190,9 @@ jobs:
               AWS_ACCESS_KEY_ID "$AWS_ACCESS_KEY_ID" \
               AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY" \
               AWS_SESSION_TOKEN "$AWS_SESSION_TOKEN" \
-              GATEWAY_SECRET "$GATEWAY_SECRET" > .env.tmp
+              ENTRA_ISSUER "$ENTRA_ISSUER" \
+              ENTRA_JWKS_URI "$ENTRA_JWKS_URI" \
+              ENTRA_AUDIENCE "$ENTRA_AUDIENCE" > .env.tmp
             mv .env.tmp .env
 
             printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin > /dev/null
