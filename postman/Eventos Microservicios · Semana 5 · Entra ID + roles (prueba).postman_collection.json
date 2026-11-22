@@ -1,0 +1,1891 @@
+{
+	"info": {
+		"_postman_id": "e2b68a6e-81fe-4448-913a-5a091f1f86a8",
+		"name": "Eventos Microservicios · Semana 5 · Entra ID + roles Copy",
+		"description": "# Eventos Microservicios · Semana 5 · Entra ID + roles\n\nEsta colección muestra **todo el flujo** de la aplicación, de lo público a lo que puede hacer cada rol.\n\n## Orden para ejecutar (de arriba hacia abajo)\n\n| Carpeta | Usuario | Qué demuestra |\n| --- | --- | --- |\n| **0 · Público** | Sin token | Metadatos públicos de Entra ID, salud, catálogo y que sin token el Gateway responde 401 |\n| **0B · EC2 directo** | Sin token | Aunque te saltes el Gateway y llames a la IP de la EC2, Spring responde 401 |\n| **1 · VENDEDOR** | Pedro | Crea un evento (201), no puede repetir el nombre (409) y no puede comprar (403) |\n| **2 · CLIENTE** | María | Compra y maneja **su** resumen en S3 (✅), pero no puede hacer cosas de admin (⛔ 403) |\n| **3 · ADMIN** | Ana | Ve cualquier compra, borra el resumen de María y **desactiva** su compra |\n| **4 · CLIENTE después del ADMIN** | María | Ya no ve su compra desactivada (404) y no puede ver compras ajenas (403) |\n\n## Antes de empezar\n\n1. **Variables** de la colección → completa el **Current value** de `gatewayUrl`, `ec2Ip`, `entraTenantId`, `entraClientId` y `entraClientSecret` (el secreto **solo** en Current value).\n    \n2. En Entra ID deben existir 3 usuarios (_Usuarios → Crear un usuario nuevo_, por ejemplo `pedro@eventosapis5.onmicrosoft.com`) con su rol asignado (_Aplicaciones empresariales → Usuarios y grupos_): **Pedro → VENDEDOR**, **María → CLIENTE**, **Ana → ADMIN**.\n    \n3. En el **Manifiesto** de la app, `requestedAccessTokenVersion` debe ser `2` (así `iss` y `aud` calzan con ENTRA_ISSUER y ENTRA_AUDIENCE).\n    \n4. **Token por carpeta:** las carpetas 1, 2, 3 y 4 tienen su propio token. En cada una: **Authorization → Get New Access Token** → inicia sesión con el usuario de esa carpeta → **Use Token**. La carpeta 4 puede reutilizar el token de María (lista _Token_ → `Token María (CLIENTE)`).\n    \n\n## Códigos que vas a ver\n\n| Código | Significa | Quién lo responde |\n| --- | --- | --- |\n| **401** | No traes token o es inválido | API Gateway o Spring Security |\n| **403** | Tienes token, pero no el rol, o la compra no es tuya | `@PreAuthorize` o el service |\n| **404** | No existe, o está desactivada (para el cliente) | El service |\n| **409** | Conflicto: evento repetido o no disponible | El service |",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "56158295",
+		"_collection_link": "https://go.postman.co/collection/56158295-e2b68a6e-81fe-4448-913a-5a091f1f86a8?source=collection_link"
+	},
+	"item": [
+		{
+			"name": "0 · Público y metadatos (sin token)",
+			"item": [
+				{
+					"name": "0.1 Metadatos de Entra ID → ENTRA_ISSUER y ENTRA_JWKS_URI",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Metadatos PÚBLICOS de Entra ID: de aquí salen ENTRA_ISSUER y ENTRA_JWKS_URI",
+									"pm.test(\"200 · Entra ID publica su configuración OpenID Connect\", () => pm.response.to.have.status(200));",
+									"const m = pm.response.json();",
+									"pm.collectionVariables.set('entraIssuer', m.issuer);",
+									"pm.collectionVariables.set('entraJwksUri', m.jwks_uri);",
+									"pm.test('Trae issuer y jwks_uri', () => { pm.expect(m.issuer).to.be.a('string'); pm.expect(m.jwks_uri).to.be.a('string'); });",
+									"pm.visualizer.set(`<style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:7px;text-align:left;vertical-align:top} th{background:#1F3A5F;color:#fff} td:first-child{font-family:monospace;font-weight:bold;white-space:nowrap} .ok{color:#1a7f37} .nota{color:#555}</style>",
+									"<h3>Valores públicos de Entra ID</h3>",
+									"<p class=\"nota\">Este documento es <b>público</b> (no necesita token): cualquiera puede leerlo. Por eso estos valores van en la pestaña <b>Variables</b> de GitHub y no en Secrets.</p>",
+									"<table><tr><th>Variable</th><th>Valor</th><th>Dónde se pega</th></tr>",
+									"<tr><td>ENTRA_ISSUER</td><td>{{issuer}}</td><td>GitHub → Variables · Autorizador del Gateway → <b>Issuer</b></td></tr>",
+									"<tr><td>ENTRA_JWKS_URI</td><td>{{jwks}}</td><td>GitHub → Variables</td></tr>",
+									"<tr><td>ENTRA_AUDIENCE</td><td>{{aud}}</td><td>GitHub → Variables · Autorizador del Gateway → <b>Audience</b></td></tr>",
+									"</table>`, { issuer: m.issuer, jwks: m.jwks_uri, aud: pm.collectionVariables.get('entraClientId') });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://login.microsoftonline.com/{{entraTenantId}}/v2.0/.well-known/openid-configuration",
+							"protocol": "https",
+							"host": [
+								"login",
+								"microsoftonline",
+								"com"
+							],
+							"path": [
+								"{{entraTenantId}}",
+								"v2.0",
+								".well-known",
+								"openid-configuration"
+							]
+						},
+						"description": "Documento **público** de OpenID Connect de Entra ID (no necesita token).\n\n- `issuer` → **ENTRA_ISSUER** (GitHub Variables y *Issuer* del autorizador del Gateway).\n- `jwks_uri` → **ENTRA_JWKS_URI** (GitHub Variables).\n- **ENTRA_AUDIENCE** es el Client ID de la app.\n\nAbre la pestaña **Visualize** para ver la tabla. El script guarda los valores para las demás peticiones."
+					},
+					"response": []
+				},
+				{
+					"name": "0.2 Llaves públicas JWKS (verifican la firma del token)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"200 · Entra ID publica sus llaves públicas\", () => pm.response.to.have.status(200));",
+									"const keys = pm.response.json().keys || [];",
+									"pm.test('Hay al menos una llave (kid)', () => pm.expect(keys.length).to.be.above(0));",
+									"pm.visualizer.set(`<style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:7px;text-align:left;vertical-align:top} th{background:#1F3A5F;color:#fff} td:first-child{font-family:monospace;font-weight:bold;white-space:nowrap} .ok{color:#1a7f37} .nota{color:#555}</style>",
+									"<h3>Llaves públicas (JWKS)</h3>",
+									"<p class=\"nota\">Entra ID <b>firma</b> cada token con su llave privada. El API Gateway y Spring verifican esa firma con estas llaves públicas: así nadie puede inventar un token válido.</p>",
+									"<table><tr><th>kid</th><th>Tipo</th><th>Uso</th></tr>",
+									"{{#each keys}}<tr><td>{{this.kid}}</td><td>{{this.kty}}</td><td>{{this.use}}</td></tr>{{/each}}</table>`, { keys });"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{entraJwksUri}}/",
+							"host": [
+								"{{entraJwksUri}}"
+							],
+							"path": [
+								""
+							]
+						},
+						"description": "Llaves **públicas** de Entra ID. Cada token viene **firmado** con la llave privada de Entra ID; el Gateway y Spring verifican la firma con estas llaves (el `kid` del token dice cuál usar). Así nadie puede fabricar un token válido."
+					},
+					"response": []
+				},
+				{
+					"name": "0.3 Salud ms-compras (EC2 directo)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"200 · ms-compras está arriba\", () => pm.response.to.have.status(200));",
+									"const s = pm.response.json();",
+									"pm.test('estado = OK', () => pm.expect(s.estado).to.eql('OK'));",
+									"pm.test('servicio = ms-compras', () => pm.expect(s.servicio).to.eql('ms-compras'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://{{ec2Ip}}:8081/salud",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8081",
+							"path": [
+								"salud"
+							]
+						},
+						"description": "Endpoint público de salud. Lo usa GitHub Actions después de desplegar para confirmar que el contenedor arrancó. No se publica en el Gateway."
+					},
+					"response": []
+				},
+				{
+					"name": "0.4 Salud ms-resumenes (EC2 directo)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"200 · ms-resumenes está arriba\", () => pm.response.to.have.status(200));",
+									"const s = pm.response.json();",
+									"pm.test('estado = OK', () => pm.expect(s.estado).to.eql('OK'));",
+									"pm.test('servicio = ms-resumenes', () => pm.expect(s.servicio).to.eql('ms-resumenes'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://{{ec2Ip}}:8082/salud",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8082",
+							"path": [
+								"salud"
+							]
+						},
+						"description": "Igual que 0.3, para ms-resumenes."
+					},
+					"response": []
+				},
+				{
+					"name": "0.5 Catálogo de eventos SIN token → 200 (público)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"200 · el catálogo es público: se ve sin iniciar sesión\", () => pm.response.to.have.status(200));",
+									"const eventos = pm.response.json();",
+									"const hoy = new Date().toISOString().slice(0, 10);",
+									"const ev = eventos.find(e => e.disponible && e.fecha >= hoy);",
+									"if (ev && !pm.collectionVariables.get('nombreEvento')) pm.collectionVariables.set('nombreEvento', ev.nombre);",
+									"pm.test('Hay al menos un evento a la venta (si no, lo crea el VENDEDOR en la carpeta 1)', () => pm.expect(ev).to.exist);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/eventos",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"eventos"
+							]
+						},
+						"description": "Ver eventos es **público**: la ruta `GET /api/eventos` no tiene autorizador en el Gateway y en Spring es `permitAll()`.\n\n**Flujo:** Gateway → ms-compras → RDS.\n\nEl script guarda un evento disponible en `nombreEvento` por si no ejecutas la carpeta 1."
+					},
+					"response": []
+				},
+				{
+					"name": "0.6 Comprar SIN token → 401 (lo frena el Gateway)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"401 · el API Gateway rechaza la petición sin token\", () => pm.response.to.have.status(401));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombreCliente\": \"Sin Token\",\n  \"emailCliente\": \"sin.token@correo.cl\",\n  \"nombreEvento\": \"{{nombreEvento}}\",\n  \"cantidad\": 2\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras"
+							]
+						},
+						"description": "**Capa 1.** Sin token, el **autorizador JWT del API Gateway** responde **401** y la petición nunca llega a la EC2."
+					},
+					"response": []
+				}
+			],
+			"description": "**Sin token.** Todo lo de esta carpeta es público.\n\n- **0.1 y 0.2:** los metadatos y las llaves de Entra ID son públicos. De ahí salen `ENTRA_ISSUER` y `ENTRA_JWKS_URI` (y `ENTRA_AUDIENCE` es el Client ID).\n    \n- **0.3 y 0.4:** `/salud` de cada microservicio (lo usa el pipeline de GitHub Actions). Va directo a la EC2 porque no se publica en el Gateway.\n    \n- **0.5:** el catálogo de eventos es público, como en cualquier página de entradas.\n    \n- **0.6:** comprar sin token → **401** (lo frena el Gateway).",
+			"auth": {
+				"type": "noauth"
+			}
+		},
+		{
+			"name": "0B · EC2 directo: saltándose el API Gateway",
+			"item": [
+				{
+					"name": "0B.1 ms-compras · ver compra SIN token → 401",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"401 · ms-compras exige token aunque te saltes el Gateway\", () => pm.response.to.have.status(401));",
+									"pm.test('Header WWW-Authenticate: Bearer (lo responde Spring Security)', () => pm.expect(pm.response.headers.get('WWW-Authenticate') || '').to.include('Bearer'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://{{ec2Ip}}:8081/api/compras/1",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8081",
+							"path": [
+								"api",
+								"compras",
+								"1"
+							]
+						},
+						"description": "Llama directo a la IP de la EC2 (puerto 8081), **sin pasar por el Gateway** y sin token. El `SecurityConfig` de ms-compras exige token → **401**.\n\nEn la semana 4 esta misma prueba respondía **200**: el Gateway protegía su URL, pero la EC2 quedaba abierta."
+					},
+					"response": []
+				},
+				{
+					"name": "0B.2 ms-compras · comprar SIN token → 401",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"401 · no se puede comprar directo en la EC2\", () => pm.response.to.have.status(401));",
+									"pm.test('Header WWW-Authenticate: Bearer (lo responde Spring Security)', () => pm.expect(pm.response.headers.get('WWW-Authenticate') || '').to.include('Bearer'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombreCliente\": \"Atacante\",\n  \"emailCliente\": \"atacante@correo.cl\",\n  \"nombreEvento\": \"{{nombreEvento}}\",\n  \"cantidad\": 2\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://{{ec2Ip}}:8081/api/compras",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8081",
+							"path": [
+								"api",
+								"compras"
+							]
+						},
+						"description": "Intento de **crear una compra** directo en la EC2, sin token → **401**. No se guarda nada en RDS."
+					},
+					"response": []
+				},
+				{
+					"name": "0B.3 ms-compras · crear evento SIN token → 401",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"401 · no se pueden crear eventos directo en la EC2\", () => pm.response.to.have.status(401));",
+									"pm.test('Header WWW-Authenticate: Bearer (lo responde Spring Security)', () => pm.expect(pm.response.headers.get('WWW-Authenticate') || '').to.include('Bearer'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombre\": \"Evento pirata\",\n  \"fecha\": \"2027-12-31\",\n  \"precio\": 1000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "http://{{ec2Ip}}:8081/api/eventos",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8081",
+							"path": [
+								"api",
+								"eventos"
+							]
+						},
+						"description": "Ver eventos es público, pero **crear** no: sin token → **401**."
+					},
+					"response": []
+				},
+				{
+					"name": "0B.4 ms-resumenes · descargar de S3 SIN token → 401",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"401 · ms-resumenes exige token aunque te saltes el Gateway\", () => pm.response.to.have.status(401));",
+									"pm.test('Header WWW-Authenticate: Bearer (lo responde Spring Security)', () => pm.expect(pm.response.headers.get('WWW-Authenticate') || '').to.include('Bearer'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://{{ec2Ip}}:8082/api/resumenes/1/s3",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8082",
+							"path": [
+								"api",
+								"resumenes",
+								"1",
+								"s3"
+							]
+						},
+						"description": "Lo mismo en ms-resumenes (puerto 8082): sin token no se puede tocar el bucket S3 → **401**."
+					},
+					"response": []
+				},
+				{
+					"name": "0B.5 ms-compras · token FALSO → 401",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"401 · un token inventado no pasa la verificación de firma\", () => pm.response.to.have.status(401));",
+									"pm.test('Header WWW-Authenticate: Bearer (lo responde Spring Security)', () => pm.expect(pm.response.headers.get('WWW-Authenticate') || '').to.include('Bearer'));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "{{bearer_token_0qgr}}"
+							}
+						],
+						"url": {
+							"raw": "http://{{ec2Ip}}:8081/api/compras/1",
+							"protocol": "http",
+							"host": [
+								"{{ec2Ip}}"
+							],
+							"port": "8081",
+							"path": [
+								"api",
+								"compras",
+								"1"
+							]
+						},
+						"description": "Un token **inventado** que dice ser ADMIN. Spring verifica la **firma** con las llaves públicas de Entra ID (JWKS) y el **emisor**: como no lo firmó Microsoft → **401**. Así nadie puede fabricarse un rol."
+					},
+					"response": []
+				}
+			],
+			"description": "**Sin token y directo a la IP de la EC2**, como si alguien descubriera la IP y quisiera saltarse el API Gateway.\n\nTodas responden **401**, porque cada microservicio tiene su propio `SecurityConfig` y valida el token por su cuenta (**defensa en profundidad**). Solo `/salud` queda abierto, porque lo usa el pipeline de GitHub Actions.\n\n| Semana 4 | Semana 5 |\n|---|---|\n| EC2 directo → **200** (abierto) | EC2 directo → **401** (protegido) |",
+			"auth": {
+				"type": "noauth"
+			}
+		},
+		{
+			"name": "1 · VENDEDOR · Pedro",
+			"item": [
+				{
+					"name": "1.1 Ver mi token (rol VENDEDOR)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Decodifica el access token de Entra ID y lo muestra en la pestaña Visualize",
+									"function leerToken() {",
+									"  const h = pm.request.headers.get('Authorization') || '';",
+									"  if (h.startsWith('Bearer ')) return h.substring(7);",
+									"  try { if (pm.request.auth && pm.request.auth.type === 'oauth2') return pm.request.auth.parameters().get('accessToken'); } catch (e) {}",
+									"  return '';",
+									"}",
+									"function decodificar(jwt) {",
+									"  let b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"  while (b64.length % 4) b64 += '=';",
+									"  return JSON.parse(CryptoJS.enc.Base64.parse(b64).toString(CryptoJS.enc.Utf8));",
+									"}",
+									"pm.test(\"200 · el API Gateway aceptó el token\", () => pm.response.to.have.status(200));",
+									"const token = leerToken();",
+									"if (!token) {",
+									"  pm.visualizer.set('<p style=\"font-family:sans-serif\">Postman no expuso el token al script. Revisa que la carpeta tenga un token (Authorization → Get New Access Token → Use Token).</p>');",
+									"} else {",
+									"  const c = decodificar(token);",
+									"  pm.test('El token trae el rol VENDEDOR', () => pm.expect(c.roles || []).to.include('VENDEDOR'));",
+									"  pm.test('iss del token = ENTRA_ISSUER (request 0.1)', () => pm.expect(c.iss).to.eql(pm.collectionVariables.get('entraIssuer')));",
+									"  pm.test('aud del token = Client ID (ENTRA_AUDIENCE)', () => pm.expect(c.aud).to.eql(pm.collectionVariables.get('entraClientId')));",
+									"  const filas = [",
+									"    { claim: 'roles', valor: (c.roles || ['(sin rol)']).join(', '), uso: 'Roles asignados en Entra ID. Spring los revisa con @PreAuthorize' },",
+									"    { claim: 'oid',   valor: c.oid || '-', uso: 'ID único del usuario. Se guarda como dueño de la compra' },",
+									"    { claim: 'name',  valor: c.name || '-', uso: 'Nombre del usuario' },",
+									"    { claim: 'iss',   valor: c.iss, uso: 'Emisor. Igual a ENTRA_ISSUER y al Issuer del autorizador del Gateway' },",
+									"    { claim: 'aud',   valor: c.aud, uso: 'Audiencia. Igual a ENTRA_AUDIENCE y al Audience del autorizador' },",
+									"    { claim: 'exp',   valor: new Date(c.exp * 1000).toLocaleString(), uso: 'Vencimiento. Después de esta hora: 401' }",
+									"  ];",
+									"  pm.visualizer.set(`<style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:7px;text-align:left;vertical-align:top} th{background:#1F3A5F;color:#fff} td:first-child{font-family:monospace;font-weight:bold;white-space:nowrap} .ok{color:#1a7f37} .nota{color:#555}</style>",
+									"  <h3>Token de Pedro (VENDEDOR)</h3>",
+									"  <table><tr><th>Claim</th><th>Valor</th><th>Para qué sirve</th></tr>",
+									"  {{#each filas}}<tr><td>{{this.claim}}</td><td>{{this.valor}}</td><td>{{this.uso}}</td></tr>{{/each}}</table>`, { filas });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/eventos",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"eventos"
+							]
+						},
+						"description": "Usa el token de Pedro y muestra sus claims en **Visualize**. Los tests confirman que trae el rol **VENDEDOR** y que `iss` y `aud` calzan con las variables de GitHub."
+					},
+					"response": []
+				},
+				{
+					"name": "1.2 Crear evento → 201",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Nombre único para no chocar con eventos anteriores",
+									"pm.collectionVariables.set('nuevoEvento', 'Concierto Cloud Native ' + Date.now());"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"201 · evento creado por el VENDEDOR\", () => pm.response.to.have.status(201));",
+									"const e = pm.response.json();",
+									"pm.collectionVariables.set('nombreEvento', e.nombre);",
+									"pm.test('Queda disponible para la venta', () => pm.expect(e.disponible).to.eql(true));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombre\": \"{{nuevoEvento}}\",\n  \"fecha\": \"2027-12-15\",\n  \"precio\": 15000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{gatewayUrl}}/api/eventos",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"eventos"
+							]
+						},
+						"description": "`@PreAuthorize(\"hasAnyRole('ADMIN', 'VENDEDOR')\")` → Pedro **sí** puede crear eventos.\n\nEl script guarda el nombre en `nombreEvento` para que María lo compre en la carpeta 2."
+					},
+					"response": []
+				},
+				{
+					"name": "1.3 Crear el MISMO evento otra vez → 409",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"409 · nombre de evento repetido\", () => pm.response.to.have.status(409));",
+									"pm.test(\"Mensaje: \\\"Ya existe un evento\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"Ya existe un evento\"));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombre\": \"{{nuevoEvento}}\",\n  \"fecha\": \"2027-12-15\",\n  \"precio\": 15000\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{gatewayUrl}}/api/eventos",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"eventos"
+							]
+						},
+						"description": "Regla de negocio: no pueden existir dos eventos con el mismo nombre → **409 Conflict** (`ApiException.conflicto`)."
+					},
+					"response": []
+				},
+				{
+					"name": "1.4 Comprar → 403 (el VENDEDOR no compra)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"403 · tiene token, pero NO tiene el rol\", () => pm.response.to.have.status(403));\npm.test(\"Mensaje: \\\"rol necesario\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"rol necesario\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombreCliente\": \"Pedro Vendedor\",\n  \"emailCliente\": \"pedro@correo.cl\",\n  \"nombreEvento\": \"{{nombreEvento}}\",\n  \"cantidad\": 2\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras"
+							]
+						},
+						"description": "`@PreAuthorize(\"hasAnyRole('CLIENTE', 'ADMIN')\")` → el rol VENDEDOR no alcanza → **403**."
+					},
+					"response": []
+				}
+			],
+			"description": "**Token de Pedro (rol VENDEDOR).** Authorization → *Get New Access Token* → inicia sesión con **Pedro** → *Use Token*.\n\nEl vendedor **publica** eventos, pero no compra entradas.",
+			"auth": {
+				"type": "oauth2",
+				"oauth2": [
+					{
+						"key": "clientId",
+						"value": "{{entraClientId}}",
+						"type": "string"
+					},
+					{
+						"key": "accessTokenUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/token",
+						"type": "string"
+					},
+					{
+						"key": "authUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/authorize",
+						"type": "string"
+					},
+					{
+						"key": "tokenName",
+						"value": "Token Pedro (VENDEDOR)",
+						"type": "string"
+					},
+					{
+						"key": "tokenType",
+						"value": "Bearer",
+						"type": "string"
+					},
+					{
+						"key": "addTokenTo",
+						"value": "header",
+						"type": "string"
+					},
+					{
+						"key": "clientSecret",
+						"value": "{{entraClientSecret}}",
+						"type": "string"
+					},
+					{
+						"key": "scope",
+						"value": "api://{{entraClientId}}/datos.leer openid offline_access",
+						"type": "string"
+					},
+					{
+						"key": "client_authentication",
+						"value": "body",
+						"type": "string"
+					},
+					{
+						"key": "redirect_uri",
+						"value": "https://oauth.pstmn.io/v1/callback",
+						"type": "string"
+					},
+					{
+						"key": "grant_type",
+						"value": "authorization_code",
+						"type": "string"
+					},
+					{
+						"key": "authRequestParams",
+						"value": [
+							{
+								"enabled": true,
+								"key": "prompt",
+								"send_as": "request_url",
+								"value": "login"
+							}
+						],
+						"type": "any"
+					},
+					{
+						"key": "useBrowser",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"key": "token_id",
+						"value": "9d432b7e-44a1-491a-84ea-8027758c45c3",
+						"type": "string"
+					},
+					{
+						"key": "id",
+						"value": "folder/687ee466-ee99-4068-a020-9bac9b672289/ebccdac5-4683-42cc-8027-d78d1679b59b",
+						"type": "string"
+					}
+				]
+			}
+		},
+		{
+			"name": "2 · CLIENTE · Ignacio",
+			"item": [
+				{
+					"name": "2A Lo que el CLIENTE puede hacer",
+					"item": [
+						{
+							"name": "2A.1 Ver mi token (rol CLIENTE)",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"// Decodifica el access token de Entra ID y lo muestra en la pestaña Visualize",
+											"function leerToken() {",
+											"  const h = pm.request.headers.get('Authorization') || '';",
+											"  if (h.startsWith('Bearer ')) return h.substring(7);",
+											"  try { if (pm.request.auth && pm.request.auth.type === 'oauth2') return pm.request.auth.parameters().get('accessToken'); } catch (e) {}",
+											"  return '';",
+											"}",
+											"function decodificar(jwt) {",
+											"  let b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+											"  while (b64.length % 4) b64 += '=';",
+											"  return JSON.parse(CryptoJS.enc.Base64.parse(b64).toString(CryptoJS.enc.Utf8));",
+											"}",
+											"pm.test(\"200 · el API Gateway aceptó el token\", () => pm.response.to.have.status(200));",
+											"const token = leerToken();",
+											"if (!token) {",
+											"  pm.visualizer.set('<p style=\"font-family:sans-serif\">Postman no expuso el token al script. Revisa que la carpeta tenga un token (Authorization → Get New Access Token → Use Token).</p>');",
+											"} else {",
+											"  const c = decodificar(token);",
+											"  pm.test('El token trae el rol CLIENTE', () => pm.expect(c.roles || []).to.include('CLIENTE'));",
+											"  pm.test('iss del token = ENTRA_ISSUER (request 0.1)', () => pm.expect(c.iss).to.eql(pm.collectionVariables.get('entraIssuer')));",
+											"  pm.test('aud del token = Client ID (ENTRA_AUDIENCE)', () => pm.expect(c.aud).to.eql(pm.collectionVariables.get('entraClientId')));",
+											"  const filas = [",
+											"    { claim: 'roles', valor: (c.roles || ['(sin rol)']).join(', '), uso: 'Roles asignados en Entra ID. Spring los revisa con @PreAuthorize' },",
+											"    { claim: 'oid',   valor: c.oid || '-', uso: 'ID único del usuario. Se guarda como dueño de la compra' },",
+											"    { claim: 'name',  valor: c.name || '-', uso: 'Nombre del usuario' },",
+											"    { claim: 'iss',   valor: c.iss, uso: 'Emisor. Igual a ENTRA_ISSUER y al Issuer del autorizador del Gateway' },",
+											"    { claim: 'aud',   valor: c.aud, uso: 'Audiencia. Igual a ENTRA_AUDIENCE y al Audience del autorizador' },",
+											"    { claim: 'exp',   valor: new Date(c.exp * 1000).toLocaleString(), uso: 'Vencimiento. Después de esta hora: 401' }",
+											"  ];",
+											"  pm.visualizer.set(`<style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:7px;text-align:left;vertical-align:top} th{background:#1F3A5F;color:#fff} td:first-child{font-family:monospace;font-weight:bold;white-space:nowrap} .ok{color:#1a7f37} .nota{color:#555}</style>",
+											"  <h3>Token de María (CLIENTE)</h3>",
+											"  <table><tr><th>Claim</th><th>Valor</th><th>Para qué sirve</th></tr>",
+											"  {{#each filas}}<tr><td>{{this.claim}}</td><td>{{this.valor}}</td><td>{{this.uso}}</td></tr>{{/each}}</table>`, { filas });",
+											"}"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{gatewayUrl}}/api/eventos",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"eventos"
+									]
+								},
+								"description": "Muestra los claims del token de María en **Visualize**: rol **CLIENTE** y su `oid`, que será el dueño de la compra."
+							},
+							"response": []
+						},
+						{
+							"name": "2A.2 Comprar entradas → 201",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"pm.test(\"201 · compra creada\", () => pm.response.to.have.status(201));",
+											"const c = pm.response.json();",
+											"pm.collectionVariables.set('numeroCliente', c.numeroResumen);",
+											"pm.test('La compra queda activa', () => pm.expect(c.activa).to.eql(true));",
+											"pm.test('El total lo calcula el backend (precio de la BD × cantidad)', () => pm.expect(Number(c.precioTotal)).to.eql(Number(c.precioUnitario) * c.cantidad));"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"nombreCliente\": \"María Cliente\",\n  \"emailCliente\": \"maria@correo.cl\",\n  \"nombreEvento\": \"{{nombreEvento}}\",\n  \"cantidad\": 2\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{gatewayUrl}}/api/compras",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"compras"
+									]
+								},
+								"description": "**Flujo:** Gateway → ms-compras → RDS `INSERT INTO compra`.\n\n- El **dueño** sale del token (`oid`), no del email del body.\n- El **total** lo calcula el backend con el precio de la BD.\n- Guarda el número en `numeroCliente`."
+							},
+							"response": []
+						},
+						{
+							"name": "2A.3 Ver MI compra → 200",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"pm.test(\"200 · el dueño puede ver su compra\", () => pm.response.to.have.status(200));",
+											"pm.test('Es la compra correcta', () => pm.expect(pm.response.json().numeroResumen).to.eql(Number(pm.collectionVariables.get('numeroCliente'))));"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{gatewayUrl}}/api/compras/{{numeroCliente}}",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"compras",
+										"{{numeroCliente}}"
+									]
+								},
+								"description": "La compra es de María y está activa → **200**."
+							},
+							"response": []
+						},
+						{
+							"name": "2A.4 Generar resumen (archivo .txt) → 200",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"pm.test(\"200 · resumen generado\", () => pm.response.to.have.status(200));",
+											"pm.test('Viene como archivo descargable', () => pm.expect(pm.response.headers.get('Content-Disposition') || '').to.include('resumen-compra-'));",
+											"pm.test('Trae el número de la compra', () => pm.expect(pm.response.text()).to.include('RESUMEN DE COMPRA N° ' + pm.collectionVariables.get('numeroCliente')));"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"resumenes",
+										"{{numeroCliente}}"
+									]
+								},
+								"description": "**Flujo:** Gateway → ms-resumenes → (HTTP interno + mismo token) → ms-compras → arma el `.txt`.\n\nNo toca S3: es el archivo físico descargable. En Postman: *Save Response → Save to a file*."
+							},
+							"response": []
+						},
+						{
+							"name": "2A.5 Subir resumen a S3 → 201",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"pm.test(\"201 · resumen subido a S3\", () => pm.response.to.have.status(201));",
+											"const n = pm.collectionVariables.get('numeroCliente');",
+											"pm.test('Clave en S3 = {numero}/resumen-compra-{numero}.txt', () => pm.expect(pm.response.json().key).to.eql(n + '/resumen-compra-' + n + '.txt'));"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [],
+								"url": {
+									"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"resumenes",
+										"{{numeroCliente}}",
+										"s3"
+									]
+								},
+								"description": "Genera el resumen y lo sube a S3 en la carpeta `{numero}/`. La ruta la arma el **servidor**, nunca el cliente."
+							},
+							"response": []
+						},
+						{
+							"name": "2A.6 Modificar resumen en S3 (PUT form-data) → 200",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"pm.test(\"200 · resumen modificado en S3\", () => pm.response.to.have.status(200));"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "PUT",
+								"header": [],
+								"body": {
+									"mode": "formdata",
+									"formdata": [
+										{
+											"key": "file",
+											"type": "file",
+											"src": "resumen-modificado.txt"
+										}
+									]
+								},
+								"url": {
+									"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"resumenes",
+										"{{numeroCliente}}",
+										"s3"
+									]
+								},
+								"description": "Reemplaza el archivo en S3 por uno corregido.\n\n**Body → form-data**, clave `file` (tipo *File*): selecciona `resumen-modificado.txt` (o cualquier `.txt` de hasta 1 MB).\n\nAntes de modificar, ms-resumenes revisa con ms-compras que la compra sea de María y que el archivo **exista** en S3."
+							},
+							"response": []
+						},
+						{
+							"name": "2A.7 Descargar resumen desde S3 → 200",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"exec": [
+											"pm.test(\"200 · resumen descargado desde S3\", () => pm.response.to.have.status(200));",
+											"pm.test('Viene como archivo descargable', () => pm.expect(pm.response.headers.get('Content-Disposition') || '').to.include('resumen-compra-'));"
+										],
+										"type": "text/javascript"
+									}
+								}
+							],
+							"request": {
+								"method": "GET",
+								"header": [],
+								"url": {
+									"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"resumenes",
+										"{{numeroCliente}}",
+										"s3"
+									]
+								},
+								"description": "Descarga el archivo guardado en S3 (con el contenido modificado en 2A.6)."
+							},
+							"response": []
+						}
+					],
+					"description": "María compra y maneja el resumen de **su** compra. La compra queda a su nombre con el `oid` de su token."
+				},
+				{
+					"name": "2B Lo que el CLIENTE NO puede hacer (403 por rol)",
+					"item": [
+						{
+							"name": "2B.1 Borrar resumen de S3 → 403 (solo ADMIN)",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"type": "text/javascript",
+										"exec": [
+											"pm.test(\"403 · tiene token, pero NO tiene el rol\", () => pm.response.to.have.status(403));\npm.test(\"Mensaje: \\\"rol necesario\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"rol necesario\"));"
+										]
+									}
+								}
+							],
+							"request": {
+								"method": "DELETE",
+								"header": [],
+								"url": {
+									"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"resumenes",
+										"{{numeroCliente}}",
+										"s3"
+									]
+								},
+								"description": "Aunque el resumen es de María, borrar de S3 es solo para **ADMIN**: el `@PreAuthorize(\"hasRole('ADMIN')\")` del método manda sobre el de la clase."
+							},
+							"response": []
+						},
+						{
+							"name": "2B.3 Crear evento → 403 (solo ADMIN o VENDEDOR)",
+							"event": [
+								{
+									"listen": "test",
+									"script": {
+										"type": "text/javascript",
+										"exec": [
+											"pm.test(\"403 · tiene token, pero NO tiene el rol\", () => pm.response.to.have.status(403));\npm.test(\"Mensaje: \\\"rol necesario\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"rol necesario\"));"
+										]
+									}
+								}
+							],
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"nombre\": \"Evento de María\",\n  \"fecha\": \"2027-12-20\",\n  \"precio\": 5000\n}",
+									"options": {
+										"raw": {
+											"language": "json"
+										}
+									}
+								},
+								"url": {
+									"raw": "{{gatewayUrl}}/api/eventos",
+									"host": [
+										"{{gatewayUrl}}"
+									],
+									"path": [
+										"api",
+										"eventos"
+									]
+								},
+								"description": "Un cliente no puede publicar eventos → **403**."
+							},
+							"response": []
+						}
+					],
+					"description": "María tiene un token válido, pero su rol **CLIENTE** no alcanza → **403** con el mensaje *\"No tienes el rol necesario para esta acción\"*.\n\nEsto lo bloquea la **capa 2** (`@PreAuthorize`): la petición pasa el Gateway y el `SecurityConfig`, pero se corta antes de entrar al método."
+				}
+			],
+			"description": "**Token de María (rol CLIENTE).** Authorization → *Get New Access Token* → inicia sesión con **María** → *Use Token*.\n\n- **2A ✅** lo que el cliente **sí** puede hacer: comprar y manejar **su** resumen en S3.\n- **2B ⛔** lo que **no** puede hacer por su rol → **403** (lo bloquea `@PreAuthorize`).",
+			"auth": {
+				"type": "oauth2",
+				"oauth2": [
+					{
+						"key": "clientId",
+						"value": "{{entraClientId}}",
+						"type": "string"
+					},
+					{
+						"key": "accessTokenUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/token",
+						"type": "string"
+					},
+					{
+						"key": "authUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/authorize",
+						"type": "string"
+					},
+					{
+						"key": "tokenName",
+						"value": "Token María (CLIENTE)",
+						"type": "string"
+					},
+					{
+						"key": "addTokenTo",
+						"value": "header",
+						"type": "string"
+					},
+					{
+						"key": "clientSecret",
+						"value": "{{entraClientSecret}}",
+						"type": "string"
+					},
+					{
+						"key": "scope",
+						"value": "api://{{entraClientId}}/datos.leer openid offline_access",
+						"type": "string"
+					},
+					{
+						"key": "client_authentication",
+						"value": "body",
+						"type": "string"
+					},
+					{
+						"key": "redirect_uri",
+						"value": "https://oauth.pstmn.io/v1/callback",
+						"type": "string"
+					},
+					{
+						"key": "grant_type",
+						"value": "authorization_code",
+						"type": "string"
+					},
+					{
+						"key": "authRequestParams",
+						"value": [
+							{
+								"enabled": true,
+								"key": "prompt",
+								"send_as": "request_url",
+								"value": "login"
+							}
+						],
+						"type": "any"
+					},
+					{
+						"key": "useBrowser",
+						"value": false,
+						"type": "boolean"
+					}
+				]
+			}
+		},
+		{
+			"name": "3 · ADMIN · María",
+			"item": [
+				{
+					"name": "3.1 Ver mi token (rol ADMIN)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Decodifica el access token de Entra ID y lo muestra en la pestaña Visualize",
+									"function leerToken() {",
+									"  const h = pm.request.headers.get('Authorization') || '';",
+									"  if (h.startsWith('Bearer ')) return h.substring(7);",
+									"  try { if (pm.request.auth && pm.request.auth.type === 'oauth2') return pm.request.auth.parameters().get('accessToken'); } catch (e) {}",
+									"  return '';",
+									"}",
+									"function decodificar(jwt) {",
+									"  let b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');",
+									"  while (b64.length % 4) b64 += '=';",
+									"  return JSON.parse(CryptoJS.enc.Base64.parse(b64).toString(CryptoJS.enc.Utf8));",
+									"}",
+									"pm.test(\"200 · el API Gateway aceptó el token\", () => pm.response.to.have.status(200));",
+									"const token = leerToken();",
+									"if (!token) {",
+									"  pm.visualizer.set('<p style=\"font-family:sans-serif\">Postman no expuso el token al script. Revisa que la carpeta tenga un token (Authorization → Get New Access Token → Use Token).</p>');",
+									"} else {",
+									"  const c = decodificar(token);",
+									"  pm.test('El token trae el rol ADMIN', () => pm.expect(c.roles || []).to.include('ADMIN'));",
+									"  pm.test('iss del token = ENTRA_ISSUER (request 0.1)', () => pm.expect(c.iss).to.eql(pm.collectionVariables.get('entraIssuer')));",
+									"  pm.test('aud del token = Client ID (ENTRA_AUDIENCE)', () => pm.expect(c.aud).to.eql(pm.collectionVariables.get('entraClientId')));",
+									"  const filas = [",
+									"    { claim: 'roles', valor: (c.roles || ['(sin rol)']).join(', '), uso: 'Roles asignados en Entra ID. Spring los revisa con @PreAuthorize' },",
+									"    { claim: 'oid',   valor: c.oid || '-', uso: 'ID único del usuario. Se guarda como dueño de la compra' },",
+									"    { claim: 'name',  valor: c.name || '-', uso: 'Nombre del usuario' },",
+									"    { claim: 'iss',   valor: c.iss, uso: 'Emisor. Igual a ENTRA_ISSUER y al Issuer del autorizador del Gateway' },",
+									"    { claim: 'aud',   valor: c.aud, uso: 'Audiencia. Igual a ENTRA_AUDIENCE y al Audience del autorizador' },",
+									"    { claim: 'exp',   valor: new Date(c.exp * 1000).toLocaleString(), uso: 'Vencimiento. Después de esta hora: 401' }",
+									"  ];",
+									"  pm.visualizer.set(`<style>body{font-family:Arial,sans-serif;font-size:13px} table{border-collapse:collapse;width:100%} td,th{border:1px solid #ccd;padding:7px;text-align:left;vertical-align:top} th{background:#1F3A5F;color:#fff} td:first-child{font-family:monospace;font-weight:bold;white-space:nowrap} .ok{color:#1a7f37} .nota{color:#555}</style>",
+									"  <h3>Token de Ana (ADMIN)</h3>",
+									"  <table><tr><th>Claim</th><th>Valor</th><th>Para qué sirve</th></tr>",
+									"  {{#each filas}}<tr><td>{{this.claim}}</td><td>{{this.valor}}</td><td>{{this.uso}}</td></tr>{{/each}}</table>`, { filas });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/eventos",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"eventos"
+							]
+						},
+						"description": "Muestra los claims del token de Ana en **Visualize**: rol **ADMIN**."
+					},
+					"response": []
+				},
+				{
+					"name": "3.2 Comprar (compra de Ana) → 201",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"201 · compra creada\", () => pm.response.to.have.status(201));",
+									"const c = pm.response.json();",
+									"pm.collectionVariables.set('numeroAjeno', c.numeroResumen);",
+									"pm.test('La compra queda activa', () => pm.expect(c.activa).to.eql(true));",
+									"pm.test('El total lo calcula el backend (precio de la BD × cantidad)', () => pm.expect(Number(c.precioTotal)).to.eql(Number(c.precioUnitario) * c.cantidad));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nombreCliente\": \"Ana Admin\",\n  \"emailCliente\": \"ana@correo.cl\",\n  \"nombreEvento\": \"{{nombreEvento}}\",\n  \"cantidad\": 2\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras"
+							]
+						},
+						"description": "El ADMIN también puede comprar. Esta compra es de **Ana**: en la carpeta 4 María intentará verla (compra ajena → 403). Guarda el número en `numeroAjeno`."
+					},
+					"response": []
+				},
+				{
+					"name": "3.3 Ver la compra de María → 200 (el admin ve todas)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"200 · el admin ve compras de otras personas\", () => pm.response.to.have.status(200));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/{{numeroCliente}}",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"{{numeroCliente}}"
+							]
+						},
+						"description": "La compra es de María, pero Ana es **ADMIN** → la regla del dueño no aplica → **200**."
+					},
+					"response": []
+				},
+				{
+					"name": "3.4 Eliminar el resumen de María de S3 → 204",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"204 · resumen eliminado de S3\", () => pm.response.to.have.status(204));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"resumenes",
+								"{{numeroCliente}}",
+								"s3"
+							]
+						},
+						"description": "Solo el **ADMIN** puede borrar resúmenes de S3 → **204 No Content**."
+					},
+					"response": []
+				},
+				{
+					"name": "3.5 Eliminar el mismo resumen otra vez → 404",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"404 · el archivo ya no está en S3\", () => pm.response.to.have.status(404));",
+									"pm.test(\"Mensaje: \\\"no está en S3\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"no está en S3\"));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"resumenes",
+								"{{numeroCliente}}",
+								"s3"
+							]
+						},
+						"description": "Antes de borrar, ms-resumenes verifica que el archivo **exista** en S3. Como ya se borró → **404**."
+					},
+					"response": []
+				},
+				{
+					"name": "3.6 Desactivar la compra de María → 204",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"204 · compra desactivada\", () => pm.response.to.have.status(204));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/{{numeroCliente}}",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"{{numeroCliente}}"
+							]
+						},
+						"description": "**Borrado lógico:** la compra **no** se elimina de RDS, solo queda con `activa = false`. Desde ahora María ya no la ve (carpeta 4)."
+					},
+					"response": []
+				},
+				{
+					"name": "3.7 Ver la compra desactivada → 200 (activa = false)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"200 · el admin ve compras desactivadas\", () => pm.response.to.have.status(200));",
+									"pm.test('activa = false', () => pm.expect(pm.response.json().activa).to.eql(false));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/{{numeroCliente}}",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"{{numeroCliente}}"
+							]
+						},
+						"description": "El admin sigue viendo la compra en la BD, marcada como **desactivada**."
+					},
+					"response": []
+				},
+				{
+					"name": "3.8 Desactivar una compra que no existe → 404",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"404 · compra inexistente\", () => pm.response.to.have.status(404));",
+									"pm.test(\"Mensaje: \\\"No existe la compra\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"No existe la compra\"));"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/999999",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"999999"
+							]
+						},
+						"description": "La compra 999999 no existe → **404** (`ApiException.noEncontrado`)."
+					},
+					"response": []
+				}
+			],
+			"description": "**Token de Ana (rol ADMIN).** Authorization → *Get New Access Token* → inicia sesión con **Ana** → *Use Token*.\n\nEl admin puede ver **cualquier** compra (incluso desactivadas), borrar resúmenes de S3 y **desactivar** compras (borrado lógico: la compra queda en la BD con `activa = false`).",
+			"auth": {
+				"type": "oauth2",
+				"oauth2": [
+					{
+						"key": "clientId",
+						"value": "{{entraClientId}}",
+						"type": "string"
+					},
+					{
+						"key": "accessTokenUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/token",
+						"type": "string"
+					},
+					{
+						"key": "authUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/authorize",
+						"type": "string"
+					},
+					{
+						"key": "tokenName",
+						"value": "Token Ana (ADMIN)",
+						"type": "string"
+					},
+					{
+						"key": "addTokenTo",
+						"value": "header",
+						"type": "string"
+					},
+					{
+						"key": "clientSecret",
+						"value": "{{entraClientSecret}}",
+						"type": "string"
+					},
+					{
+						"key": "scope",
+						"value": "api://{{entraClientId}}/datos.leer openid offline_access",
+						"type": "string"
+					},
+					{
+						"key": "client_authentication",
+						"value": "body",
+						"type": "string"
+					},
+					{
+						"key": "redirect_uri",
+						"value": "https://oauth.pstmn.io/v1/callback",
+						"type": "string"
+					},
+					{
+						"key": "grant_type",
+						"value": "authorization_code",
+						"type": "string"
+					},
+					{
+						"key": "authRequestParams",
+						"value": [
+							{
+								"enabled": true,
+								"key": "prompt",
+								"send_as": "request_url",
+								"value": "login"
+							}
+						],
+						"type": "any"
+					},
+					{
+						"key": "useBrowser",
+						"value": false,
+						"type": "boolean"
+					}
+				]
+			}
+		},
+		{
+			"name": "4 · CLIENTE después del ADMIN · Ignacio",
+			"item": [
+				{
+					"name": "4.1 Ver la compra de OTRA persona → 403",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"403 · la compra no es de María\", () => pm.response.to.have.status(403));\npm.test(\"Mensaje: \\\"no te pertenece\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"no te pertenece\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/{{numeroAjeno}}",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"{{numeroAjeno}}"
+							]
+						},
+						"description": "María tiene el rol CLIENTE (pasa `@PreAuthorize`), pero la compra es de **Ana** → el service responde **403** *\"no te pertenece\"*."
+					},
+					"response": []
+				},
+				{
+					"name": "4.2 Generar resumen de una compra AJENA → 403",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"403 · no puede generar el resumen de otra persona\", () => pm.response.to.have.status(403));\npm.test(\"Mensaje: \\\"no te pertenece\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"no te pertenece\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/resumenes/{{numeroAjeno}}",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"resumenes",
+								"{{numeroAjeno}}"
+							]
+						},
+						"description": "ms-resumenes le pide la compra a ms-compras **reenviando el token de María**. ms-compras responde 403 y ms-resumenes también corta con **403**: no se arma ningún resumen."
+					},
+					"response": []
+				},
+				{
+					"name": "4.3 Ver MI compra desactivada → 404",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 · compra desactivada: para el cliente ya no existe\", () => pm.response.to.have.status(404));\npm.test(\"Mensaje: \\\"No existe la compra\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"No existe la compra\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/{{numeroCliente}}",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"{{numeroCliente}}"
+							]
+						},
+						"description": "El admin desactivó la compra en 3.6. Para el cliente, una compra desactivada **ya no existe** → **404**."
+					},
+					"response": []
+				},
+				{
+					"name": "4.4 Descargar el resumen de MI compra desactivada → 404",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 · no se entrega el resumen de una compra desactivada\", () => pm.response.to.have.status(404));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/resumenes/{{numeroCliente}}/s3",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"resumenes",
+								"{{numeroCliente}}",
+								"s3"
+							]
+						},
+						"description": "Antes de tocar S3, ms-resumenes pregunta a ms-compras. Como la compra está desactivada → **404**. Aunque el archivo siguiera en el bucket, **no se entrega**."
+					},
+					"response": []
+				},
+				{
+					"name": "4.5 Ver una compra que NO existe → 404",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test(\"404 · compra inexistente\", () => pm.response.to.have.status(404));\npm.test(\"Mensaje: \\\"No existe la compra\\\"\", () => pm.expect(pm.response.json().mensaje).to.include(\"No existe la compra\"));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{gatewayUrl}}/api/compras/999999",
+							"host": [
+								"{{gatewayUrl}}"
+							],
+							"path": [
+								"api",
+								"compras",
+								"999999"
+							]
+						},
+						"description": "La compra no existe → **404** (no 403: no hay nada que proteger)."
+					},
+					"response": []
+				}
+			],
+			"description": "**Otra vez el token de María.** Authorization → lista *Token* → elige `Token María (CLIENTE)`. Si ya venció, pide uno nuevo con María.\n\nEjecuta esta carpeta **después de la carpeta 3**. Aquí se ven las reglas de la **capa del service**:\n- Una compra de **otra persona** → **403** (*\"no te pertenece\"*), aunque María sí tenga el rol CLIENTE.\n- Su compra **desactivada** por el admin → **404**: para el cliente \"ya no existe\".\n- Aunque el archivo siga en S3, ms-resumenes **no lo entrega**, porque antes le pregunta a ms-compras (reenviando el token).",
+			"auth": {
+				"type": "oauth2",
+				"oauth2": [
+					{
+						"key": "clientId",
+						"value": "{{entraClientId}}",
+						"type": "string"
+					},
+					{
+						"key": "accessTokenUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/token",
+						"type": "string"
+					},
+					{
+						"key": "authUrl",
+						"value": "https://login.microsoftonline.com/304e2867-4a2d-4e20-a0ca-09ad18f5dfb2/oauth2/v2.0/authorize",
+						"type": "string"
+					},
+					{
+						"key": "tokenName",
+						"value": "Token María (CLIENTE)",
+						"type": "string"
+					},
+					{
+						"key": "addTokenTo",
+						"value": "header",
+						"type": "string"
+					},
+					{
+						"key": "clientSecret",
+						"value": "{{entraClientSecret}}",
+						"type": "string"
+					},
+					{
+						"key": "scope",
+						"value": "api://{{entraClientId}}/datos.leer openid offline_access",
+						"type": "string"
+					},
+					{
+						"key": "client_authentication",
+						"value": "body",
+						"type": "string"
+					},
+					{
+						"key": "redirect_uri",
+						"value": "https://oauth.pstmn.io/v1/callback",
+						"type": "string"
+					},
+					{
+						"key": "grant_type",
+						"value": "authorization_code",
+						"type": "string"
+					},
+					{
+						"key": "authRequestParams",
+						"value": [
+							{
+								"enabled": true,
+								"key": "prompt",
+								"send_as": "request_url",
+								"value": "login"
+							}
+						],
+						"type": "any"
+					},
+					{
+						"key": "useBrowser",
+						"value": false,
+						"type": "boolean"
+					}
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "gatewayUrl",
+			"value": "https://API_ID.execute-api.us-east-1.amazonaws.com",
+			"description": "Invoke URL del API Gateway (sin / al final)"
+		},
+		{
+			"key": "ec2Ip",
+			"value": "IP_ELASTICA_EC2",
+			"description": "IP elástica de la EC2 (para /salud y la prueba 0.7)"
+		},
+		{
+			"key": "entraTenantId",
+			"value": "00000000-0000-0000-0000-000000000000",
+			"description": "Id. de directorio (inquilino)"
+		},
+		{
+			"key": "entraClientId",
+			"value": "00000000-0000-0000-0000-000000000000",
+			"description": "Id. de aplicación (cliente). También es ENTRA_AUDIENCE"
+		},
+		{
+			"key": "entraClientSecret",
+			"value": "",
+			"description": "VALOR del secreto de cliente. Ponlo SOLO en 'Current value', nunca en 'Initial value'"
+		},
+		{
+			"key": "entraIssuer",
+			"value": "",
+			"description": "Lo llena 0.1"
+		},
+		{
+			"key": "entraJwksUri",
+			"value": "",
+			"description": "Lo llena 0.1"
+		},
+		{
+			"key": "nombreEvento",
+			"value": "",
+			"description": "Lo llenan 0.5 o 1.2: evento que se compra"
+		},
+		{
+			"key": "nuevoEvento",
+			"value": "",
+			"description": "Lo llena 1.2: nombre único del evento creado"
+		},
+		{
+			"key": "numeroCliente",
+			"value": "",
+			"description": "Lo llena 2A.2: compra de María"
+		},
+		{
+			"key": "numeroAjeno",
+			"value": "",
+			"description": "Lo llena 3.2: compra de Ana (ajena para María)"
+		},
+		{
+			"key": "bearer_token_0qgr",
+			"secret": true
+		}
+	]
+}
